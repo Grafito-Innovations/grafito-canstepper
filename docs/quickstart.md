@@ -3,6 +3,12 @@
 ## 1. Hardware + firmware
 
 Board: **[CANStepper Adapter Board](https://grafito.in/shop/products/canstepper-adapter-board/)** on the Grafito shop.
+The current production board is **V2** (JST 2.0 connectors). Earlier **V1**
+boards used three different connector types and are harder to cable.
+
+> **Important — encoder magnet:** Mount a **diametrical** magnet on the shaft
+> over the MT6701 (≈1–2 mm air gap). Magnet polarity must be **radial**, not
+> axial. An axial magnet will not produce a valid encoder angle.
 
 1. Apply main Vin (**5–24 V**, typically **24 V**). **USB does not power the
    ESP32 for programming** — Vin is required to flash; USB-C is data only.

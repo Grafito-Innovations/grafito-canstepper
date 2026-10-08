@@ -32,6 +32,7 @@ CAD and brochure files in this repo (`model_assets/`):
 | `CANStepper.png` | Product photo (also at repo root) |
 | `CANStepper_pinout.png` | Connector / pinout diagram |
 | `CANStepper_multiaxis_can.png` | Multi-axis CAN bus demonstration |
+| `CANStepper_V1_assembly.mp4` | V1 board assembly video (historical) |
 | `CANStepper_block_diagram.png` | System block diagram |
 | `CANStepper_V2_Assembly.webp` | V2 assembly render |
 | `Drawing_CANStepper_V2.pdf` | V2 PCB mechanical drawing |
@@ -44,6 +45,17 @@ CAD and brochure files in this repo (`model_assets/`):
 ![CANStepper pinout](model_assets/CANStepper_pinout.png)
 
 ![CAN bus multi-axis demonstration](model_assets/CANStepper_multiaxis_can.png)
+
+[V1 board assembly video](model_assets/CANStepper_V1_assembly.mp4)
+
+This clip is **version 1** of the same board. V1 used **three different
+connector types**, which made cabling and crimping difficult. The current
+production board is **V2**, with **JST 2.0** connectors throughout for easy
+crimping.
+
+> **Important — encoder magnet:** Fit a **diametrical** magnet on the motor
+> shaft. The magnet polarity must be **radial**, not axial. An axial magnet
+> will not produce a valid MT6701 angle and closed-loop control will fail.
 
 ## Highlights
 

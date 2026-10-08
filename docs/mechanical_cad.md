@@ -10,6 +10,7 @@ board assets used on the shop and docs sites.
 | `CANStepper.png` | `/model-assets/canstepper.png` | Product photo |
 | `CANStepper_pinout.png` | `/model-assets/canstepper-pinout.png` | Connector / pinout diagram |
 | `CANStepper_multiaxis_can.png` | `/model-assets/canstepper-multiaxis-can.png` | Multi-axis CAN bus demonstration |
+| `CANStepper_V1_assembly.mp4` | — | V1 board assembly video (historical) |
 | `CANStepper_block_diagram.png` | `/model-assets/canstepper-block-diagram.webp` | System block diagram |
 | `CANStepper_V2_Assembly.webp` | `/model-assets/canstepper-v2-assembly.webp` | V2 assembly render |
 | `Drawing_CANStepper_V2.pdf` | `/model-assets/canstepper-v2-drawing.pdf` | V2 PCB mechanical drawing |
@@ -29,5 +30,14 @@ https://grafito.in/brochures/canstepper-brochure-v2.pdf
 
 | Topic | URL | Docs embed |
 | --- | --- | --- |
+| V1 assembly (this repo) | [model_assets/CANStepper_V1_assembly.mp4](../model_assets/CANStepper_V1_assembly.mp4) | Historical V1 board — mixed connectors |
 | Assembly walkthrough | https://www.youtube.com/watch?v=ULpthBzb50s | https://docs.grafito.in/docs/mechanical-cad#assembly-video |
 | Leader / follower (encoder mirror) | https://www.youtube.com/shorts/0dZ-bfxO9gM | https://docs.grafito.in/docs/motion#dual-motor-axes-eg-dual-z-gantries |
+
+The V1 clip shows an earlier revision of the same board. V1 used **three
+different connector types**, which made cabling and crimping difficult. The
+current production board is **V2**, with **JST 2.0** connectors throughout.
+
+> **Important — encoder magnet:** Use a **diametrical** magnet on the motor
+> shaft. Polarity must be **radial**, not axial. An axial magnet will not
+> give a valid MT6701 reading.
