@@ -1,6 +1,6 @@
 # Grafito CANStepper
 
-![Grafito CANStepper](CANStepper.png)
+![Grafito CANStepper](https://raw.githubusercontent.com/Grafito-Innovations/grafito-canstepper/main/CANStepper.png)
 
 Closed-loop stepper motor control over CAN. Each board carries an ESP32-C3,
 a TMC2209 driver, an MT6701 14-bit magnetic encoder and a CAN transceiver;
@@ -45,13 +45,13 @@ CAD and brochure files in this repo (`model_assets/`):
 | `TMC2209 UART Stepper Driver - Heat_Sink.step` | TMC2209 heatsink STEP |
 | `canstepper-brochure-v2.pdf` | Product brochure |
 
-<img src="model_assets/CANStepper_pinout.png" alt="CANStepper pinout" width="720" />
+<img src="https://raw.githubusercontent.com/Grafito-Innovations/grafito-canstepper/main/model_assets/CANStepper_pinout.png" alt="CANStepper pinout" width="720" />
 
-<img src="model_assets/CANStepper_multiaxis_can.png" alt="CAN bus multi-axis demonstration" width="900" />
+<img src="https://raw.githubusercontent.com/Grafito-Innovations/grafito-canstepper/main/model_assets/CANStepper_multiaxis_can.png" alt="CAN bus multi-axis demonstration" width="900" />
 
 **V1 board assembly** (click the preview to play the video):
 
-[![V1 board assembly](model_assets/CANStepper_V1_assembly_preview.jpg)](model_assets/CANStepper_V1_assembly.mp4)
+[![V1 board assembly](https://raw.githubusercontent.com/Grafito-Innovations/grafito-canstepper/main/model_assets/CANStepper_V1_assembly_preview.jpg)](https://github.com/Grafito-Innovations/grafito-canstepper/blob/main/model_assets/CANStepper_V1_assembly.mp4)
 
 This clip is **version 1** of the same board. V1 used **three different
 connector types**, which made cabling and crimping difficult. The current
@@ -67,7 +67,7 @@ After USB and Vin are connected, test the board in the
 node ID, enable the driver, jog, and check encoder / TMC / CAN telemetry.
 
 <a href="https://docs.grafito.in/dashboard">
-  <img src="model_assets/CANStepper_test_station.png" alt="CANStepper Test Station" width="900" />
+  <img src="https://raw.githubusercontent.com/Grafito-Innovations/grafito-canstepper/main/model_assets/CANStepper_test_station.png" alt="CANStepper Test Station" width="900" />
 </a>
 
 ## Highlights
