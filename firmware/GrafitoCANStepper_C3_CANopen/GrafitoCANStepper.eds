@@ -1,19 +1,20 @@
 ; Grafito CANStepper C3 - CANopen Electronic Data Sheet (CiA 306)
-; Matches firmware/GrafitoCANStepper_C3_CANopen (fw 2.0, CiA 402 subset).
+; Matches firmware/GrafitoCANStepper_C3_CANopen (fw 2.1, CiA 402 subset).
+; Replace any older GrafitoCANStepper.eds (fw 2.0 / revision 0x00020000).
 ; Vendor ID 0x000005A3 is a development placeholder. Register a CiA ID before
 ; shipping a production EDS.
 
 [FileInfo]
 FileName=GrafitoCANStepper.eds
 FileVersion=1
-FileRevision=0
+FileRevision=2
 EDSVersion=4.0
-Description=Grafito CANStepper C3 CiA 402
+Description=Grafito CANStepper C3 CiA 402 firmware 2.1
 CreationTime=12:00PM
 CreationDate=09-13-2026
 CreatedBy=Grafito Innovations
 ModificationTime=12:00PM
-ModificationDate=09-13-2026
+ModificationDate=10-08-2026
 ModifiedBy=Grafito Innovations
 
 [DeviceInfo]
@@ -21,7 +22,7 @@ VendorName=Grafito Innovations
 VendorNumber=0x000005A3
 ProductName=Grafito CANStepper C3
 ProductNumber=0x00004333
-RevisionNumber=0x00020000
+RevisionNumber=0x00020100
 OrderCode=GRAFITO-CANSTEPPER-C3
 BaudRate_10=0
 BaudRate_20=0
@@ -51,9 +52,11 @@ Dummy0006=1
 Dummy0007=1
 
 [Comments]
-Lines=2
-Line1=Units: position = MT6701 encoder counts (16384 / rev).
-Line2=Supported 402 modes: pp (1), pv (3), hm (6).
+Lines=4
+Line1=Firmware 2.1 EDS (FileRevision 2, identity 0x00020100). Replace any older GrafitoCANStepper.eds (2.0 / revision 0x00020000) - those files will not import this board.
+Line2=Units: MT6701 encoder counts (16384 / rev). Supported 402 modes: pp (1), pv (3), hm (6).
+Line3=COB-IDs use $NODEID+... so the PLC can assign any node 1-127. For a pre-addressed node, import GrafitoCANStepper_NodeN.dcf instead.
+Line4=Enable 6 -> 7 -> 15. Bus 1 Mbps. Vin 5-24 V required; USB-C is data only.
 
 
 [MandatoryObjects]
@@ -99,7 +102,7 @@ SupportedObjects=33
 33=0x6502
 
 [ManufacturerObjects]
-SupportedObjects=26
+SupportedObjects=32
 1=0x2000
 2=0x2001
 3=0x2002
@@ -126,13 +129,19 @@ SupportedObjects=26
 24=0x2017
 25=0x2018
 26=0x2019
+27=0x201A
+28=0x201B
+29=0x201C
+30=0x201D
+31=0x201E
+32=0x201F
 
 [1000]
 ParameterName=Device Type
 ObjectType=0x7
 DataType=0x0007
 AccessType=ro
-DefaultValue=0x40192
+DefaultValue=0x00040192
 PDOMapping=0
 
 [1001]
@@ -161,7 +170,7 @@ ParameterName=Vendor ID
 ObjectType=0x7
 DataType=0x0007
 AccessType=ro
-DefaultValue=0x5A3
+DefaultValue=0x000005A3
 PDOMapping=0
 
 [1018sub2]
@@ -169,7 +178,7 @@ ParameterName=Product Code
 ObjectType=0x7
 DataType=0x0007
 AccessType=ro
-DefaultValue=0x4333
+DefaultValue=0x00004333
 PDOMapping=0
 
 [1018sub3]
@@ -177,7 +186,7 @@ ParameterName=Revision Number
 ObjectType=0x7
 DataType=0x0007
 AccessType=ro
-DefaultValue=0x20000
+DefaultValue=0x00020100
 PDOMapping=0
 
 [1018sub4]
@@ -185,7 +194,7 @@ ParameterName=Serial Number
 ObjectType=0x7
 DataType=0x0007
 AccessType=ro
-DefaultValue=1
+DefaultValue=0x00000001
 PDOMapping=0
 
 [1005]
@@ -217,7 +226,7 @@ ParameterName=Manufacturer Software Version
 ObjectType=0x7
 DataType=0x0009
 AccessType=ro
-DefaultValue=2.0.0
+DefaultValue=2.1.0
 PDOMapping=0
 
 [1014]
@@ -225,7 +234,7 @@ ParameterName=COB-ID EMCY
 ObjectType=0x7
 DataType=0x0007
 AccessType=ro
-DefaultValue=0x81
+DefaultValue=$NODEID+0x80
 PDOMapping=0
 
 [1017]
@@ -256,7 +265,7 @@ ParameterName=COB-ID Client to Server
 ObjectType=0x7
 DataType=0x0007
 AccessType=ro
-DefaultValue=0x601
+DefaultValue=$NODEID+0x600
 PDOMapping=0
 
 [1200sub2]
@@ -264,7 +273,7 @@ ParameterName=COB-ID Server to Client
 ObjectType=0x7
 DataType=0x0007
 AccessType=ro
-DefaultValue=0x581
+DefaultValue=$NODEID+0x580
 PDOMapping=0
 
 [1400]
@@ -285,7 +294,7 @@ ParameterName=RPDO1 COB-ID
 ObjectType=0x7
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x201
+DefaultValue=$NODEID+0x200
 PDOMapping=0
 
 [1400sub2]
@@ -314,7 +323,7 @@ ParameterName=RPDO2 COB-ID
 ObjectType=0x7
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x301
+DefaultValue=$NODEID+0x300
 PDOMapping=0
 
 [1401sub2]
@@ -401,7 +410,7 @@ ParameterName=TPDO1 COB-ID
 ObjectType=0x7
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x181
+DefaultValue=$NODEID+0x180
 PDOMapping=0
 
 [1800sub2]
@@ -430,7 +439,7 @@ ParameterName=TPDO2 COB-ID
 ObjectType=0x7
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x281
+DefaultValue=$NODEID+0x280
 PDOMapping=0
 
 [1801sub2]
@@ -585,7 +594,7 @@ ParameterName=Profile Acceleration
 ObjectType=0x7
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x20000
+DefaultValue=0x10000
 PDOMapping=0
 LowLimit=1
 
@@ -594,7 +603,7 @@ ParameterName=Profile Deceleration
 ObjectType=0x7
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x20000
+DefaultValue=0x10000
 PDOMapping=0
 LowLimit=1
 
@@ -811,7 +820,7 @@ ParameterName=PID Kp
 ObjectType=0x7
 DataType=0x0008
 AccessType=rw
-DefaultValue=12.0
+DefaultValue=10.0
 PDOMapping=0
 
 [2010]
@@ -827,7 +836,7 @@ ParameterName=PID Kd
 ObjectType=0x7
 DataType=0x0008
 AccessType=rw
-DefaultValue=0.1
+DefaultValue=0.35
 PDOMapping=0
 
 [2012]
@@ -871,7 +880,7 @@ ParameterName=Firmware Version
 ObjectType=0x7
 DataType=0x0006
 AccessType=ro
-DefaultValue=0x200
+DefaultValue=0x201
 PDOMapping=0
 
 [2017]
@@ -896,4 +905,54 @@ ObjectType=0x7
 DataType=0x0008
 AccessType=ro
 DefaultValue=24.0
+PDOMapping=0
+
+[201A]
+ParameterName=PID Ka
+ObjectType=0x7
+DataType=0x0008
+AccessType=rw
+DefaultValue=0.04
+PDOMapping=0
+
+[201B]
+ParameterName=Profile Jerk Deg/s3
+ObjectType=0x7
+DataType=0x0008
+AccessType=rw
+DefaultValue=0.0
+PDOMapping=0
+
+[201C]
+ParameterName=LUT Enable
+ObjectType=0x7
+DataType=0x0005
+AccessType=rw
+DefaultValue=0
+PDOMapping=0
+HighLimit=1
+
+[201D]
+ParameterName=LUT Command
+ObjectType=0x7
+DataType=0x0005
+AccessType=wo
+DefaultValue=0
+PDOMapping=0
+HighLimit=3
+
+[201E]
+ParameterName=LUT Valid
+ObjectType=0x7
+DataType=0x0005
+AccessType=ro
+DefaultValue=0
+PDOMapping=0
+
+[201F]
+ParameterName=LUT Peak INL Deg
+ObjectType=0x7
+DataType=0x0008
+AccessType=ro
+DefaultValue=0.0
 PDOMapping=0

@@ -11,7 +11,6 @@ board assets used on the shop and docs sites.
 | `CANStepper_pinout.png` | `/model-assets/canstepper-pinout.png` | Connector / pinout diagram |
 | `CANStepper_multiaxis_can.png` | `/model-assets/canstepper-multiaxis-can.png` | Multi-axis CAN bus demonstration |
 | `CANStepper_V1_assembly.mp4` | — | V1 board assembly video (historical) |
-| `CANStepper_test_station.png` | https://docs.grafito.in/dashboard | Board Test Station after USB connect |
 | `CANStepper_block_diagram.png` | `/model-assets/canstepper-block-diagram.webp` | System block diagram |
 | `CANStepper_V2_Assembly.webp` | `/model-assets/canstepper-v2-assembly.webp` | V2 assembly render |
 | `Drawing_CANStepper_V2.pdf` | `/model-assets/canstepper-v2-drawing.pdf` | V2 PCB mechanical drawing |

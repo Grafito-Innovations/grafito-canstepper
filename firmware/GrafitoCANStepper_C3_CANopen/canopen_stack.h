@@ -10,13 +10,13 @@
 
 static const uint32_t CO_VENDOR_ID     = 0x000005A3UL;
 static const uint32_t CO_PRODUCT_CODE  = 0x00004333UL;
-static const uint32_t CO_REVISION      = 0x00020000UL;
+static const uint32_t CO_REVISION      = 0x00020100UL;
 static const uint32_t CO_SERIAL        = 0x00000001UL;
 static const uint32_t CO_DEVICE_TYPE   = 0x00040192UL;
 static const uint32_t CO_SUPPORTED_MODES = 0x00000025UL;
 static const char     CO_DEVICE_NAME[] = "CANStepper";
 static const char     CO_HW_VERSION[]  = "C3";
-static const char     CO_SW_VERSION[]  = "2.0.0";
+static const char     CO_SW_VERSION[]  = "2.1.0";
 
 static const uint8_t  NMT_BOOTUP = 0x00;
 static const uint8_t  NMT_STOPPED = 0x04;
@@ -79,6 +79,7 @@ struct CoApp {
   void (*on_save)();
   void (*on_load_defaults)();
   void (*on_param)(uint16_t index);
+  void (*on_lut_cmd)(uint8_t action);
 };
 
 struct CoOd {
@@ -121,6 +122,11 @@ struct CoOd {
   float    pid_ki;
   float    pid_kd;
   float    pid_tol;
+  float    pid_ka;
+  float    profile_jerk;
+  uint8_t  lut_enable;
+  uint8_t  lut_valid;
+  float    lut_peak_inl;
   uint8_t  enable_on_boot;
   uint8_t  zero_on_boot;
   uint32_t homing_timeout_ms;
@@ -171,9 +177,9 @@ static void coDefaults(uint8_t nodeId) {
   gOd.qs_option = 2;
   gOd.mode = 1;
   gOd.mode_display = 1;
-  gOd.profile_vel = 32768;
-  gOd.profile_acc = 131072;
-  gOd.profile_dec = 131072;
+  gOd.profile_vel = 32768;     // 720 deg/s
+  gOd.profile_acc = 65536;     // 1440 deg/s² (fw 2.1 precision default)
+  gOd.profile_dec = 65536;
   gOd.qs_dec = 262144;
   gOd.homing_method = 35;
   gOd.homing_speed1 = 2275;
@@ -190,10 +196,15 @@ static void coDefaults(uint8_t nodeId) {
   gOd.endstop_enable = 1;
   gOd.endstop_active_high = 1;
   gOd.bitrate = 1000000;
-  gOd.pid_kp = 12.0f;
+  gOd.pid_kp = 10.0f;
   gOd.pid_ki = 0.3f;
-  gOd.pid_kd = 0.10f;
+  gOd.pid_kd = 0.35f;
   gOd.pid_tol = 0.35f;
+  gOd.pid_ka = 0.04f;
+  gOd.profile_jerk = 0.0f;     // 0 = auto amax/0.05 s
+  gOd.lut_enable = 0;
+  gOd.lut_valid = 0;
+  gOd.lut_peak_inl = 0.0f;
   gOd.homing_timeout_ms = 30000;
   gOd.encoder_ok = 1;
   gOd.bus_voltage = 24.0f;
@@ -287,7 +298,7 @@ static void coApplyControlword(uint16_t cw) {
   }
 
   bool risingSp = (cw & CW_NEW_SP) && !(gPrevCw & CW_NEW_SP);
-  gPrevCw = gOd.controlword;
+  gPrevCw = cw;
   gOd.controlword = cw;
   gOd.mode_display = gOd.mode;
   coBuildStatus();
@@ -455,10 +466,16 @@ static bool coOdRead(uint16_t index, uint8_t sub, uint8_t *out, uint8_t *len, co
     case 0x2013: if (sub == 0) U8(gOd.enable_on_boot); break;
     case 0x2014: if (sub == 0) U8(gOd.zero_on_boot); break;
     case 0x2015: if (sub == 0) U32(gOd.homing_timeout_ms); break;
-    case 0x2016: if (sub == 0) U16(0x0200); break;
+    case 0x2016: if (sub == 0) U16(0x0201); break;
     case 0x2017: if (sub == 0) U8(gOd.encoder_ok); break;
     case 0x2018: if (sub == 0) U8(gOd.endstop_active); break;
     case 0x2019: if (sub == 0) R32(gOd.bus_voltage); break;
+    case 0x201A: if (sub == 0) R32(gOd.pid_ka); break;
+    case 0x201B: if (sub == 0) R32(gOd.profile_jerk); break;
+    case 0x201C: if (sub == 0) U8(gOd.lut_enable); break;
+    case 0x201D: return false;
+    case 0x201E: if (sub == 0) U8(gOd.lut_valid); break;
+    case 0x201F: if (sub == 0) R32(gOd.lut_peak_inl); break;
     default: return false;
   }
   return false;
@@ -487,7 +504,8 @@ static bool coKnownIndex(uint16_t index) {
     case 0x200A: case 0x200B: case 0x200C: case 0x200D: case 0x200E:
     case 0x200F: case 0x2010: case 0x2011: case 0x2012: case 0x2013:
     case 0x2014: case 0x2015: case 0x2016: case 0x2017: case 0x2018:
-    case 0x2019:
+    case 0x2019: case 0x201A: case 0x201B: case 0x201C: case 0x201D:
+    case 0x201E: case 0x201F:
       return true;
     default:
       return false;
@@ -590,6 +608,17 @@ static bool coOdWrite(uint16_t index, uint8_t sub, const uint8_t *raw, uint8_t n
     case 0x2013: if (sub == 0 && need(1) && raw[0] <= 1) { gOd.enable_on_boot = raw[0]; return true; } break;
     case 0x2014: if (sub == 0 && need(1) && raw[0] <= 1) { gOd.zero_on_boot = raw[0]; return true; } break;
     case 0x2015: if (sub == 0 && need(4)) { coCopyU(&gOd.homing_timeout_ms, raw, 4); return true; } break;
+    case 0x201A: if (sub == 0 && need(4)) { coCopyU(&gOd.pid_ka, raw, 4); return true; } break;
+    case 0x201B: if (sub == 0 && need(4)) { coCopyU(&gOd.profile_jerk, raw, 4); return true; } break;
+    case 0x201C: {
+      if (sub != 0 || !need(1) || raw[0] > 1) break;
+      if (raw[0] && !gOd.lut_valid) return false;
+      gOd.lut_enable = raw[0];
+      return true;
+    }
+    case 0x201D:
+      if (sub == 0 && need(1) && gApp.on_lut_cmd) { gApp.on_lut_cmd(raw[0]); return true; }
+      break;
     default: break;
   }
   return false;
@@ -599,7 +628,7 @@ static void coSdoRead(uint16_t index, uint8_t sub) {
   uint8_t tmp[4] = {0};
   uint8_t len = 0;
   const uint8_t *blob = nullptr;
-  if (index == 0x2008 || index == 0x2009) {
+  if (index == 0x2008 || index == 0x2009 || index == 0x201D) {
     coSendAbort(index, sub, SDO_ABORT_WO);
     return;
   }
@@ -670,7 +699,7 @@ static void coOnSdo(const uint8_t *d, uint8_t len) {
               index == 0x603F || index == 0x6041 || index == 0x6061 ||
               index == 0x6064 || index == 0x606C || index == 0x6502 ||
               index == 0x2016 || index == 0x2017 || index == 0x2018 ||
-              index == 0x2019;
+              index == 0x2019 || index == 0x201E || index == 0x201F;
     if (!coKnownIndex(index)) { coSendAbort(index, sub, SDO_ABORT_NOOBJ); return; }
     if (ro) { coSendAbort(index, sub, SDO_ABORT_RO); return; }
     if (!coOdWrite(index, sub, raw, rawn)) {

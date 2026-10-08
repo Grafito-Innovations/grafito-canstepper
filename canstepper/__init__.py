@@ -53,6 +53,7 @@ from .protocol import (
     Fault,
     Frame,
     HomeMethod,
+    LutAction,
     Mode,
     Param,
     StandstillMode,
@@ -62,6 +63,7 @@ from .telemetry import (
     CanHealth,
     DriverStatus,
     FollowStatus,
+    LutStatus,
     NodeState,
     NodeStatus,
     PidStatus,
@@ -75,7 +77,7 @@ from .tmc2209 import (
 )
 from .transport import SerialBridgeTransport, Transport
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 __all__ = [
     "Axis",
@@ -107,6 +109,8 @@ __all__ = [
     "HomingFailed",
     "IndependentDualAxis",
     "LimitViolation",
+    "LutAction",
+    "LutStatus",
     "Machine",
     "Mode",
     "MotionGroup",

@@ -1,8 +1,11 @@
 /*
- * GrafitoCANStepper_C3_CANopen — CiA 301 / CiA 402 firmware (fw 2.0)
+ * GrafitoCANStepper_C3_CANopen — CiA 301 / CiA 402 firmware (fw 2.1)
  *
  * Flash this sketch instead of GrafitoCANStepper_C3.ino when the node must
  * speak CANopen to a PLC. The original GCSP firmware is unchanged.
+ *
+ * 2.1 ports GCSP 1.12 motion: 7-segment S-curve, accel feedforward (Ka),
+ * 200-step encoder LUT, and measured PID/accel defaults.
  *
  * Identity / EDS: GrafitoCANStepper.eds  (same folder)
  * Host reference + tests: canstepper/canopen402.py
@@ -26,7 +29,7 @@
 #include "canopen_stack.h"
 
 static const uint8_t FW_MAJOR = 2;
-static const uint8_t FW_MINOR = 0;
+static const uint8_t FW_MINOR = 1;  // 2.1: S-curve + Ka + LUT (GCSP 1.12 motion)
 
 #ifndef CO_FACTORY_NODE_ID
 #define CO_FACTORY_NODE_ID 1
@@ -50,7 +53,9 @@ static const uint32_t PID_PERIOD_US = 5000;
 static const uint32_t PID_SETTLE_MS = 80;
 static const uint32_t ENC_LOSS_TIMEOUT_US = 25000;
 
-enum Mode : uint8_t { MODE_IDLE = 0, MODE_POSITION = 1, MODE_VELOCITY = 2, MODE_HOMING = 3 };
+enum Mode : uint8_t {
+  MODE_IDLE = 0, MODE_POSITION = 1, MODE_VELOCITY = 2, MODE_HOMING = 3, MODE_LUT = 5
+};
 
 Preferences prefs;
 TMC2209 tmc;
@@ -86,8 +91,27 @@ static bool   trajActive = false;
 static bool   trajDone = true;
 static double trajS0 = 0.0, trajS1 = 0.0, trajRef = 0.0;
 static float  trajSign = 1.0f, trajDist = 0.0f, trajVpeak = 0.0f, trajA = 1.0f;
-static float  trajTacc = 0.0f, trajTcruise = 0.0f, trajTdec = 0.0f, trajTtot = 0.0f;
-static float  trajT = 0.0f, trajVff = 0.0f;
+static float  trajJ = 1.0f, trajTj = 0.0f, trajTc = 0.0f, trajTv = 0.0f, trajTtot = 0.0f;
+static float  trajT = 0.0f, trajVff = 0.0f, trajAff = 0.0f;
+
+static const uint16_t LUT_N = 200;
+static const uint32_t LUT_MAGIC = 0x314C4547;  // 'GEL1'
+static const uint32_t LUT_SETTLE_MS = 60;
+static bool     lutValid = false;
+static uint16_t lutE[200];
+static int32_t  lutU[201];
+static float    lutPeakInlDeg = 0.0f;
+static uint8_t  lutPhase = 0;
+static uint8_t  lutPass = 0;
+static uint16_t lutIndex = 0;
+static bool     lutNeedCapture = false;
+static uint32_t lutWaitMs = 0;
+static uint16_t lutFwd[200];
+static uint16_t lutRev[200];
+static uint8_t  lutSavedClosed = 0;
+static uint8_t  lutSavedStandstill = 0;
+static uint8_t  lutSavedHold = 0;
+static uint8_t  lutSavedEndstop = 0;
 
 static bool     endstopActive = false;
 static bool     endstopRawHigh = true;
@@ -117,6 +141,13 @@ static inline int32_t degToCounts(double d) { return (int32_t)lround(d * ENC_CPR
 static inline float countsSToDegS(int32_t v) { return (float)v * 360.0f / (float)ENC_CPR; }
 static inline double encoderDeg() { return countsToDeg(encCounts); }
 static void IRAM_ATTR onDiagRise() { stallFlag = true; }
+static void lutFail(uint8_t reason);
+static void lutBegin();
+static void lutService();
+static void lutClear();
+static void lutLoadNvs();
+static void lutSaveNvs();
+static void appLutCmd(uint8_t action);
 
 static uint8_t crc6_itu(uint32_t data18) {
   uint8_t crc = 0;
@@ -127,6 +158,50 @@ static uint8_t crc6_itu(uint32_t data18) {
     if (bit ^ msb) crc ^= 0x03;
   }
   return crc;
+}
+
+static int32_t lutUnwrapDelta(int32_t a, int32_t b) {
+  int32_t d = (b - a) % ENC_CPR;
+  if (d < 0) d += ENC_CPR;
+  if (d > ENC_CPR / 2) d -= ENC_CPR;
+  return d;
+}
+
+static void lutRebuild() {
+  if (!lutValid) return;
+  lutU[0] = (int32_t)lutE[0];
+  for (uint16_t k = 1; k < LUT_N; k++)
+    lutU[k] = lutU[k - 1] + lutUnwrapDelta(lutE[k - 1], lutE[k]);
+  lutU[LUT_N] = lutU[0] + ENC_CPR;
+  float peak = 0.0f;
+  for (uint16_t k = 0; k < LUT_N; k++) {
+    float meas = (float)(lutU[k] - lutU[0]);
+    float expect = (float)k * ((float)ENC_CPR / (float)LUT_N);
+    float err = fabsf(meas - expect) * 360.0f / (float)ENC_CPR;
+    if (err > peak) peak = err;
+  }
+  lutPeakInlDeg = peak;
+  coOd()->lut_peak_inl = peak;
+}
+
+static uint16_t lutApply(uint16_t raw) {
+  if (!lutValid || !coOd()->lut_enable) return raw;
+  int32_t q = lutU[0] + lutUnwrapDelta(lutE[0], (int32_t)raw);
+  while (q < lutU[0]) q += ENC_CPR;
+  while (q >= lutU[0] + ENC_CPR) q -= ENC_CPR;
+  uint16_t lo = 0, hi = LUT_N;
+  while ((uint16_t)(lo + 1) < hi) {
+    uint16_t mid = (uint16_t)((lo + hi) >> 1);
+    if (lutU[mid] <= q) lo = mid;
+    else hi = mid;
+  }
+  int32_t u0 = lutU[lo];
+  int32_t u1 = lutU[lo + 1];
+  float frac = (u1 == u0) ? 0.0f : (float)(q - u0) / (float)(u1 - u0);
+  float cal = ((float)lo + frac) * ((float)ENC_CPR / (float)LUT_N);
+  int32_t ic = (int32_t)lroundf(cal) % ENC_CPR;
+  if (ic < 0) ic += ENC_CPR;
+  return (uint16_t)ic;
 }
 
 static uint32_t encoderReadFrame() {
@@ -159,7 +234,14 @@ static bool encoderUpdate() {
   if ((int32_t)prevRaw > 3 * q && (int32_t)raw < q) turns++;
   else if ((int32_t)prevRaw < q && (int32_t)raw > 3 * q) turns--;
   prevRaw = raw;
-  encCounts = (int64_t)raw + (int64_t)turns * ENC_CPR - encZeroOffset;
+  int64_t rawUnwrapped = (int64_t)raw + (int64_t)turns * ENC_CPR;
+  int32_t corr = 0;
+  if (lutValid && coOd()->lut_enable) {
+    corr = (int32_t)lutApply(raw) - (int32_t)raw;
+    if (corr > ENC_CPR / 2) corr -= ENC_CPR;
+    if (corr < -ENC_CPR / 2) corr += ENC_CPR;
+  }
+  encCounts = rawUnwrapped + corr - encZeroOffset;
   return true;
 }
 
@@ -212,6 +294,7 @@ static void trajClear() {
   trajDone = true;
   trajT = 0;
   trajVff = 0;
+  trajAff = 0;
 }
 
 static void stopImmediate() {
@@ -269,50 +352,154 @@ static void setDriverEnabled(bool en) {
 }
 
 static void trajPlan(double s0, double s1, float vmax, float amax) {
-  trajS0 = s0; trajS1 = s1;
+  trajS0 = s0;
+  trajS1 = s1;
   float d = (float)(s1 - s0);
   trajDist = fabsf(d);
-  trajSign = (d >= 0) ? 1.0f : -1.0f;
-  trajA = fmaxf(amax, 1.0f);
+  trajSign = (d >= 0.0f) ? 1.0f : -1.0f;
+  amax = fmaxf(amax, 1.0f);
   vmax = fmaxf(vmax, 0.001f);
-  trajT = 0; trajRef = s0; trajVff = 0; trajActive = true;
+  trajT = 0.0f;
+  trajRef = s0;
+  trajVff = 0.0f;
+  trajAff = 0.0f;
+  trajActive = true;
+
   if (trajDist < 1e-4f) {
-    trajDone = true; trajRef = s1; trajTtot = 0; return;
+    trajVpeak = 0.0f;
+    trajTj = trajTc = trajTv = trajTtot = 0.0f;
+    trajDone = true;
+    trajRef = s1;
+    return;
   }
-  float dAccFull = (vmax * vmax) / (2.0f * trajA);
-  if (2.0f * dAccFull >= trajDist) {
-    trajVpeak = sqrtf(trajA * trajDist);
-    trajTacc = trajTdec = trajVpeak / trajA;
-    trajTcruise = 0;
+
+  float J = coOd()->profile_jerk;
+  if (J < 1.0f) J = amax / 0.05f;
+  J = fminf(J, amax / 0.005f);
+  J = fmaxf(J, amax / 0.20f);
+  float A = amax;
+  float V = vmax;
+  float Tj = A / J;
+  float Tc, Tv;
+
+  if (V / A < Tj) {
+    A = sqrtf(V * J);
+    if (A > amax) A = amax;
+    Tj = A / J;
+    Tc = fmaxf(0.0f, V / A - Tj);
   } else {
-    trajVpeak = vmax;
-    trajTacc = trajTdec = vmax / trajA;
-    trajTcruise = (trajDist - 2.0f * dAccFull) / vmax;
+    Tc = V / A - Tj;
   }
-  trajTtot = trajTacc + trajTcruise + trajTdec;
+  V = A * (Tc + Tj);
+  float sAcc = 0.5f * A * Tc * Tc + 1.5f * A * Tj * Tc + A * Tj * Tj;
+
+  if (2.0f * sAcc <= trajDist) {
+    Tv = (trajDist - 2.0f * sAcc) / fmaxf(V, 1e-6f);
+  } else {
+    Tv = 0.0f;
+    float disc = Tj * Tj + 4.0f * trajDist / A;
+    Tc = (-3.0f * Tj + sqrtf(fmaxf(disc, 0.0f))) * 0.5f;
+    if (Tc < 0.0f) {
+      Tc = 0.0f;
+      Tj = cbrtf(trajDist / (2.0f * J));
+      A = J * Tj;
+      V = J * Tj * Tj;
+    } else {
+      V = A * (Tc + Tj);
+    }
+  }
+  if (V > vmax) V = vmax;
+
+  trajJ = J;
+  trajA = A;
+  trajVpeak = V;
+  trajTj = Tj;
+  trajTc = Tc;
+  trajTv = Tv;
+  trajTtot = 4.0f * Tj + 2.0f * Tc + Tv;
   trajDone = false;
 }
 
 static void trajAdvance(float dt) {
   if (!trajActive) return;
-  if (trajDone) { trajRef = trajS1; trajVff = 0; return; }
+  if (trajDone) {
+    trajRef = trajS1;
+    trajVff = 0.0f;
+    trajAff = 0.0f;
+    return;
+  }
   trajT += dt;
   if (trajT >= trajTtot - 1e-7f) {
-    trajDone = true; trajRef = trajS1; trajVff = 0; return;
+    trajT = trajTtot;
+    trajDone = true;
+    trajRef = trajS1;
+    trajVff = 0.0f;
+    trajAff = 0.0f;
+    return;
   }
-  float t = trajT, sLocal, vLocal;
-  float dAcc = 0.5f * trajA * trajTacc * trajTacc;
-  if (t <= trajTacc) {
-    vLocal = trajA * t; sLocal = 0.5f * trajA * t * t;
-  } else if (t <= trajTacc + trajTcruise) {
-    vLocal = trajVpeak; sLocal = dAcc + trajVpeak * (t - trajTacc);
+
+  const float J = trajJ, A = trajA, V = trajVpeak;
+  const float Tj = trajTj, Tc = trajTc, Tv = trajTv;
+  const float T1 = Tj;
+  const float T2 = T1 + Tc;
+  const float T3 = T2 + Tj;
+  const float T4 = T3 + Tv;
+  const float T5 = T4 + Tj;
+  const float T6 = T5 + Tc;
+  const float t = trajT;
+  float sLocal, vLocal, aLocal;
+  const float v1 = 0.5f * A * Tj;
+  const float s1 = A * Tj * Tj / 6.0f;
+  const float v2 = v1 + A * Tc;
+  const float s2 = s1 + v1 * Tc + 0.5f * A * Tc * Tc;
+  const float s3 = s2 + v2 * Tj + (1.0f / 3.0f) * A * Tj * Tj;
+  const float s4 = s3 + V * Tv;
+  const float v5 = V - v1;
+  const float s5 = s4 + V * Tj - s1;
+  const float v6 = v5 - A * Tc;
+  const float s6 = s5 + v5 * Tc - 0.5f * A * Tc * Tc;
+
+  if (t <= T1 + 1e-9f) {
+    aLocal = J * t;
+    vLocal = 0.5f * J * t * t;
+    sLocal = J * t * t * t / 6.0f;
+  } else if (t <= T2 + 1e-9f) {
+    float tau = t - T1;
+    aLocal = A;
+    vLocal = v1 + A * tau;
+    sLocal = s1 + v1 * tau + 0.5f * A * tau * tau;
+  } else if (t <= T3 + 1e-9f) {
+    float tau = t - T2;
+    aLocal = A - J * tau;
+    vLocal = v2 + A * tau - 0.5f * J * tau * tau;
+    sLocal = s2 + v2 * tau + 0.5f * A * tau * tau - J * tau * tau * tau / 6.0f;
+  } else if (t <= T4 + 1e-9f) {
+    float tau = t - T3;
+    aLocal = 0.0f;
+    vLocal = V;
+    sLocal = s3 + V * tau;
+  } else if (t <= T5 + 1e-9f) {
+    float tau = t - T4;
+    aLocal = -J * tau;
+    vLocal = V - 0.5f * J * tau * tau;
+    sLocal = s4 + V * tau - J * tau * tau * tau / 6.0f;
+  } else if (t <= T6 + 1e-9f) {
+    float tau = t - T5;
+    aLocal = -A;
+    vLocal = v5 - A * tau;
+    sLocal = s5 + v5 * tau - 0.5f * A * tau * tau;
   } else {
-    float td = t - trajTacc - trajTcruise;
-    vLocal = fmaxf(0.0f, trajVpeak - trajA * td);
-    sLocal = dAcc + trajVpeak * trajTcruise + trajVpeak * td - 0.5f * trajA * td * td;
+    float tau = t - T6;
+    aLocal = -A + J * tau;
+    vLocal = v6 - A * tau + 0.5f * J * tau * tau;
+    sLocal = s6 + v6 * tau - 0.5f * A * tau * tau + J * tau * tau * tau / 6.0f;
   }
+  if (vLocal < 0.0f) vLocal = 0.0f;
+  if (sLocal > trajDist) sLocal = trajDist;
+  if (sLocal < 0.0f) sLocal = 0.0f;
   trajRef = trajS0 + (double)(trajSign * sLocal);
   trajVff = trajSign * vLocal;
+  trajAff = trajSign * aLocal;
 }
 
 static void beginPositionMove(double deg) {
@@ -393,6 +580,7 @@ static void pidService() {
   coSetVelocityActual((int32_t)lround(pidVelFilt * ENC_CPR / 360.0f));
   coSetEncoderOk(encFrameOk);
 
+  if (mode == MODE_LUT) return;
   if (!(coOd()->closed_loop && pidState == 1 && driverEnabled && mode == MODE_POSITION) || !stepper)
     return;
 
@@ -413,6 +601,7 @@ static void pidService() {
   if (trajActive) trajAdvance(dt);
   float trackErr = trajActive ? (float)(trajRef - measured) : (float)(targetDeg - measured);
   float vFf = trajActive && !trajDone ? trajVff : 0.0f;
+  if (trajActive && !trajDone) vFf += coOd()->pid_ka * trajAff;
   float targetErr = (float)(targetDeg - measured);
   float absTargetErr = fabsf(targetErr);
   float absVel = fabsf(pidVelFilt);
@@ -498,7 +687,7 @@ static void endstopService() {
   endstopActive = active;
   coSetEndstopActive(active);
   if (!coOd()->endstop_enable) return;
-  if (active && !(mode == MODE_HOMING && homingPhase == 1)) {
+  if (active && mode != MODE_LUT && !(mode == MODE_HOMING && homingPhase == 1)) {
     stopImmediate();
     moveDonePending = false;
     mode = MODE_IDLE;
@@ -616,6 +805,227 @@ static void canHealthService() {
   }
 }
 
+static void lutSyncOd() {
+  coOd()->lut_valid = lutValid ? 1 : 0;
+  coOd()->lut_peak_inl = lutPeakInlDeg;
+}
+
+static void lutRestoreMotionParams() {
+  coOd()->closed_loop = lutSavedClosed;
+  coOd()->standstill = lutSavedStandstill;
+  coOd()->hold_current = lutSavedHold;
+  coOd()->endstop_enable = lutSavedEndstop;
+  tmc.setHoldCurrent(lutSavedHold);
+  switch (lutSavedStandstill) {
+    case 1: tmc.setStandstillMode(tmc.FREEWHEELING); break;
+    case 2: tmc.setStandstillMode(tmc.BRAKING); break;
+    case 3: tmc.setStandstillMode(tmc.STRONG_BRAKING); break;
+    default: tmc.setStandstillMode(tmc.NORMAL); break;
+  }
+  applySpeedAccel();
+}
+
+static void lutSaveNvs() {
+  uint8_t blob[4 + 2 + 2 + sizeof(lutE) + 4];
+  memset(blob, 0, sizeof(blob));
+  memcpy(blob, &LUT_MAGIC, 4);
+  uint16_t n = LUT_N;
+  memcpy(blob + 4, &n, 2);
+  uint16_t en = coOd()->lut_enable ? 1 : 0;
+  memcpy(blob + 6, &en, 2);
+  memcpy(blob + 8, lutE, sizeof(lutE));
+  memcpy(blob + 8 + sizeof(lutE), &lutPeakInlDeg, 4);
+  prefs.begin("co402", false);
+  prefs.putBytes("lut", blob, sizeof(blob));
+  prefs.end();
+}
+
+static void lutLoadNvs() {
+  uint8_t blob[4 + 2 + 2 + sizeof(lutE) + 4];
+  prefs.begin("co402", true);
+  size_t n = prefs.getBytes("lut", blob, sizeof(blob));
+  prefs.end();
+  lutValid = false;
+  lutPeakInlDeg = 0.0f;
+  coOd()->lut_enable = 0;
+  lutSyncOd();
+  if (n < sizeof(blob)) return;
+  uint32_t magic = 0;
+  memcpy(&magic, blob, 4);
+  uint16_t pts = 0;
+  memcpy(&pts, blob + 4, 2);
+  if (magic != LUT_MAGIC || pts != LUT_N) return;
+  uint16_t en = 0;
+  memcpy(&en, blob + 6, 2);
+  memcpy(lutE, blob + 8, sizeof(lutE));
+  memcpy(&lutPeakInlDeg, blob + 8 + sizeof(lutE), 4);
+  lutValid = true;
+  lutRebuild();
+  coOd()->lut_enable = (en && lutValid) ? 1 : 0;
+  lutSyncOd();
+}
+
+static void lutClear() {
+  lutValid = false;
+  lutPeakInlDeg = 0.0f;
+  memset(lutE, 0, sizeof(lutE));
+  coOd()->lut_enable = 0;
+  lutSyncOd();
+  prefs.begin("co402", false);
+  prefs.remove("lut");
+  prefs.end();
+}
+
+static bool lutSampleRaw(uint16_t *out) {
+  uint32_t frame = encoderReadFrame();
+  uint16_t raw = (frame >> 10) & 0x3FFF;
+  uint8_t rxCrc = frame & 0x3F;
+  bool stuck = (frame == 0x000000) || ((frame & 0xFFFFC0) == 0xFFFFC0);
+  bool crcOk = (crc6_itu((frame >> 6) & 0x3FFFF) == rxCrc);
+  if (!crcOk || stuck) return false;
+  *out = raw;
+  return true;
+}
+
+static void lutFail(uint8_t reason) {
+  if (lutPhase == 0) return;
+  lutPhase = 0;
+  lutRestoreMotionParams();
+  mode = MODE_IDLE;
+  Serial.printf("# LUT failed reason=%u\n", reason);
+}
+
+static void lutMoveFullStep(int dir) {
+  if (!stepper) return;
+  int32_t ms = (int32_t)coOd()->microsteps;
+  if (ms < 1) ms = 1;
+  float spd = 90.0f;
+  float acc = fmaxf(countsSToDegS((int32_t)coOd()->profile_acc), 720.0f);
+  uint32_t hz = (uint32_t)llround(spd * stepsPerDeg());
+  int32_t a = (int32_t)llround(acc * stepsPerDeg());
+  stepper->setSpeedInHz(hz < 1 ? 1 : hz);
+  stepper->setAcceleration(a < 1 ? 1 : a);
+  int32_t cur = stepper->getCurrentPosition();
+  cmdDirSign = dir >= 0 ? 1 : -1;
+  stepper->moveTo(cur + dir * ms);
+}
+
+static bool lutFinalize() {
+  for (uint16_t k = 0; k < LUT_N; k++) {
+    int32_t mid = (int32_t)lutFwd[k] + lutUnwrapDelta(lutFwd[k], lutRev[k]) / 2;
+    mid %= ENC_CPR;
+    if (mid < 0) mid += ENC_CPR;
+    lutE[k] = (uint16_t)mid;
+  }
+  lutValid = true;
+  lutRebuild();
+  const int32_t minStep = 25;
+  const int32_t maxStep = 160;
+  for (uint16_t k = 0; k < LUT_N; k++) {
+    int32_t step = lutU[k + 1] - lutU[k];
+    if (step < minStep || step > maxStep) {
+      lutValid = false;
+      lutSyncOd();
+      return false;
+    }
+  }
+  coOd()->lut_enable = 1;
+  lutSyncOd();
+  lutSaveNvs();
+  return true;
+}
+
+static void lutBegin() {
+  if (lutPhase != 0) {
+    Serial.println("# LUT failed: already running");
+    return;
+  }
+  if (!stepper || !driverEnabled) {
+    Serial.println("# LUT failed: driver off");
+    return;
+  }
+  homingPhase = 0;
+  stopImmediate();
+
+  lutSavedClosed = coOd()->closed_loop;
+  lutSavedStandstill = coOd()->standstill;
+  lutSavedHold = coOd()->hold_current;
+  lutSavedEndstop = coOd()->endstop_enable;
+  coOd()->closed_loop = 0;
+  coOd()->endstop_enable = 0;
+  uint8_t hold = coOd()->run_current;
+  if (hold < 25) hold = 25;
+  coOd()->hold_current = hold;
+  tmc.setHoldCurrent(hold);
+  tmc.setStandstillMode(tmc.NORMAL);
+  coOd()->lut_enable = 0;
+
+  mode = MODE_LUT;
+  lutPass = 0;
+  lutIndex = 0;
+  lutNeedCapture = true;
+  lutPhase = 1;
+  lutWaitMs = millis() + 80;
+  Serial.println("# LUT cal start (200 full steps fwd+rev)");
+}
+
+static void lutService() {
+  if (lutPhase == 0 || mode != MODE_LUT || !stepper) return;
+  if (stepper->isRunning()) return;
+  if ((int32_t)(millis() - lutWaitMs) < 0) return;
+
+  if (lutNeedCapture) {
+    uint16_t raw = 0;
+    if (!lutSampleRaw(&raw)) { lutFail(2); return; }
+    if (lutPass == 0) lutFwd[lutIndex] = raw;
+    else lutRev[lutIndex] = raw;
+    lutNeedCapture = false;
+    if ((lutIndex % 20) == 0)
+      Serial.printf("# LUT pass=%u idx=%u raw=%u\n", lutPass, lutIndex, raw);
+
+    if (lutPass == 0) {
+      if (lutIndex < LUT_N - 1) {
+        lutIndex++;
+        lutMoveFullStep(+1);
+        lutNeedCapture = true;
+        lutWaitMs = millis() + LUT_SETTLE_MS;
+      } else {
+        lutPass = 1;
+        lutNeedCapture = true;
+        lutWaitMs = millis() + 10;
+      }
+    } else {
+      if (lutIndex > 0) {
+        lutIndex--;
+        lutMoveFullStep(-1);
+        lutNeedCapture = true;
+        lutWaitMs = millis() + LUT_SETTLE_MS;
+      } else {
+        bool ok = lutFinalize();
+        lutPhase = 0;
+        lutRestoreMotionParams();
+        mode = MODE_IDLE;
+        cmdDirSign = 0;
+        if (ok)
+          Serial.printf("# LUT done peak_INL=%.3f deg\n", lutPeakInlDeg);
+        else
+          Serial.println("# LUT failed: detent spacing out of range");
+      }
+    }
+  }
+}
+
+static void appLutCmd(uint8_t action) {
+  if (action == 0) lutBegin();
+  else if (action == 1) {
+    if (lutValid) coOd()->lut_enable = 1;
+  } else if (action == 2) {
+    coOd()->lut_enable = 0;
+  } else if (action == 3) {
+    lutClear();
+  }
+}
+
 static void paramsSaveNvs() {
   prefs.begin("co402", false);
   prefs.putUChar("id", coOd()->node_id);
@@ -627,7 +1037,13 @@ static void paramsSaveNvs() {
   prefs.putUChar("hold", coOd()->hold_current);
   prefs.putUChar("inv", coOd()->invert_dir);
   prefs.putUChar("cl", coOd()->closed_loop);
+  prefs.putFloat("kp", coOd()->pid_kp);
+  prefs.putFloat("ki", coOd()->pid_ki);
+  prefs.putFloat("kd", coOd()->pid_kd);
+  prefs.putFloat("ka", coOd()->pid_ka);
+  prefs.putFloat("jerk", coOd()->profile_jerk);
   prefs.end();
+  if (lutValid) lutSaveNvs();
 }
 
 static void paramsLoadNvs() {
@@ -643,7 +1059,13 @@ static void paramsLoadNvs() {
   coOd()->hold_current = prefs.getUChar("hold", 5);
   coOd()->invert_dir = prefs.getUChar("inv", 0);
   coOd()->closed_loop = prefs.getUChar("cl", 1);
+  coOd()->pid_kp = prefs.getFloat("kp", 10.0f);
+  coOd()->pid_ki = prefs.getFloat("ki", 0.3f);
+  coOd()->pid_kd = prefs.getFloat("kd", 0.35f);
+  coOd()->pid_ka = prefs.getFloat("ka", 0.04f);
+  coOd()->profile_jerk = prefs.getFloat("jerk", 0.0f);
   prefs.end();
+  lutLoadNvs();
 }
 
 static void appEnable(bool on) { setDriverEnabled(on); }
@@ -749,6 +1171,7 @@ void setup() {
   app.on_save = appSave;
   app.on_load_defaults = appLoadDefaults;
   app.on_param = appParam;
+  app.on_lut_cmd = appLutCmd;
   prefs.begin("co402", true);
   uint8_t bootId = prefs.getUChar("id", CO_FACTORY_NODE_ID);
   prefs.end();
@@ -770,6 +1193,8 @@ void setup() {
   encoderUpdate();
   pidPrevDeg = encoderDeg();
   setDriverEnabled(false);
+  Serial.printf("# LUT: valid=%u enabled=%u peak_INL=%.3f deg\n",
+                (unsigned)coOd()->lut_valid, (unsigned)coOd()->lut_enable, lutPeakInlDeg);
 
   if (canStart(coOd()->bitrate))
     Serial.printf("# CAN started (%lu bit/s) node %u\n",
@@ -790,6 +1215,7 @@ void loop() {
   serialService();
   endstopService();
   homingService();
+  lutService();
   velocityService();
   pidService();
   moveDoneService();

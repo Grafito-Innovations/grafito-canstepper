@@ -45,6 +45,7 @@ class Cmd(IntEnum):
     FOLLOW = 13         # u8 en, u8 leader, u8 flags, u8 rsvd, f32 ratio
     FOLLOW_SYNC = 14    # recapture the leader/local zero offset
     SET_POSITION = 15   # f64 logical angle here; shaft does not move
+    LUT = 16            # u8 action: 0 cal, 1 enable, 2 disable, 3 clear (fw ≥1.10)
 
 
 class Tel(IntEnum):
@@ -70,6 +71,7 @@ class Tel(IntEnum):
                         # u16 tx_failed, u16 bus_errors
     ENC_COUNTS = 42     # i64 multi-turn encoder counts
     PID_STATUS = 43     # u8 state, u8 fault, f32 output deg/s
+    LUT_STATUS = 44     # u8 valid, u8 enabled, u16 n, f32 peak_inl_deg (fw ≥1.10)
 
 
 class Event(IntEnum):
@@ -82,6 +84,8 @@ class Event(IntEnum):
     MOVE_DONE = 7
     ESTOP = 8
     FAULT = 9
+    LUT_DONE = 10       # encoder LUT calibration finished; data = peak INL deg
+    LUT_FAILED = 11     # LUT calibration failed; detail = reason code
 
 
 class Mode(IntEnum):
@@ -90,6 +94,7 @@ class Mode(IntEnum):
     VELOCITY = 2
     HOMING = 3
     FOLLOW = 4
+    LUT = 5             # 200-step encoder LUT calibration in progress (fw ≥1.10)
 
 
 class Fault(IntEnum):
@@ -167,6 +172,9 @@ class Param(IntEnum):
     HOMING_BACKOFF = 26
     HOMING_TIMEOUT_MS = 27
     STEALTHCHOP = 28
+    LUT_ENABLE = 29     # 0/1 apply 200-step encoder LUT (fw ≥1.10; needs a table)
+    CL_MAX_JERK = 30    # f32 deg/s^3; 0 = auto amax/0.05s (fw ≥1.11)
+    PID_KA = 31         # f32 s; acceleration feedforward v += Ka·a (fw ≥1.11)
 
 
 @dataclass(frozen=True)
@@ -206,12 +214,12 @@ PARAMS: Dict[Param, ParamDef] = {
         _p(Param.INVERT_DIR, "I", 0, 0, 1, "invert physical direction"),
         _p(Param.CLOSED_LOOP, "I", 1, 0, 1, "encoder position loop on/off"),
         _p(Param.MAX_SPEED, "f", 720.0, 0.001, 1e9, "position-move speed, deg/s"),
-        _p(Param.ACCELERATION, "f", 2880.0, 0.001, 1e9, "acceleration, deg/s^2"),
-        _p(Param.CL_MAX_SPEED, "f", 720.0, 0.001, 1e9, "CL trap cruise speed vmax, deg/s"),
-        _p(Param.CL_MAX_ACCEL, "f", 2880.0, 0.001, 1e9, "CL trap accel/decel amax, deg/s^2"),
-        _p(Param.PID_KP, "f", 12.0, 0.0, 1e6, "CL tracking Kp (v_ff + Kp·(r−enc))"),
+        _p(Param.ACCELERATION, "f", 1440.0, 0.001, 1e9, "acceleration, deg/s^2"),
+        _p(Param.CL_MAX_SPEED, "f", 720.0, 0.001, 1e9, "CL S-curve cruise vmax, deg/s"),
+        _p(Param.CL_MAX_ACCEL, "f", 1440.0, 0.001, 1e9, "CL S-curve amax, deg/s^2"),
+        _p(Param.PID_KP, "f", 10.0, 0.0, 1e6, "CL tracking Kp (v_ff + Ka·a_ff + Kp·(r−enc))"),
         _p(Param.PID_KI, "f", 0.3, 0.0, 1e6, "CL tracking Ki"),
-        _p(Param.PID_KD, "f", 0.10, 0.0, 1e6, "CL D-on-measured-velocity Kd"),
+        _p(Param.PID_KD, "f", 0.35, 0.0, 1e6, "CL D-on-measured-velocity Kd"),
         _p(Param.PID_TOLERANCE, "f", 0.35, 0.001, 360.0, "settle tolerance, deg"),
         _p(Param.FAST_RATE_HZ, "I", 10, 0, 500, "fast telemetry rate (0 = off)"),
         _p(Param.SLOW_RATE_HZ, "I", 1, 0, 500, "slow telemetry rate (0 = off)"),
@@ -225,8 +233,20 @@ PARAMS: Dict[Param, ParamDef] = {
         _p(Param.HOMING_BACKOFF, "f", 2.0, 0.0, 36000.0, "post-trigger backoff, deg"),
         _p(Param.HOMING_TIMEOUT_MS, "I", 30000, 100, 600000, "homing timeout, ms"),
         _p(Param.STEALTHCHOP, "I", 1, 0, 1, "StealthChop quiet mode"),
+        _p(Param.LUT_ENABLE, "I", 0, 0, 1, "apply 200-step MT6701 LUT (fw ≥1.10)"),
+        _p(Param.CL_MAX_JERK, "f", 0.0, 0.0, 1e9, "CL S-curve jerk; 0 = auto (fw ≥1.11)"),
+        _p(Param.PID_KA, "f", 0.04, 0.0, 1.0, "CL acceleration feedforward gain, seconds"),
     ]
 }
+
+
+class LutAction(IntEnum):
+    """Payload byte 0 of ``Cmd.LUT``."""
+
+    CALIBRATE = 0
+    ENABLE = 1
+    DISABLE = 2
+    CLEAR = 3
 
 PARAMS_BY_NAME: Dict[str, ParamDef] = {d.param.name.lower(): d for d in PARAMS.values()}
 

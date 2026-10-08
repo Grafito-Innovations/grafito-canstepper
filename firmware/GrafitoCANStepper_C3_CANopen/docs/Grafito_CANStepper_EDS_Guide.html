@@ -63,7 +63,7 @@
   <h1>Grafito CANStepper C3</h1>
   <p class="subtitle">CANopen Electronic Data Sheet (EDS) Configuration Guide</p>
   <p class="meta">
-    Beginner to advanced &nbsp;|&nbsp; Firmware 2.0 (CiA 301 + CiA 402 subset)<br>
+    Beginner to advanced &nbsp;|&nbsp; Firmware 2.1 (CiA 301 + CiA 402 subset)<br>
     File: <span class="mono">GrafitoCANStepper.eds</span> &nbsp;|&nbsp; EDS version 4.0 &nbsp;|&nbsp; 13 September 2026<br>
     Grafito Innovations
   </p>
@@ -72,7 +72,7 @@
 
 <div class="warn">
   <strong>Two firmwares, two protocols</strong>
-  The production Python product still uses GCSP v1 (<span class="mono">GrafitoCANStepper_C3.ino</span>, firmware 1.9). PLC / EDS support is the separate CANopen sketch (<span class="mono">GrafitoCANStepper_C3_CANopen</span>, firmware 2.0). Do not mix GCSP and CANopen nodes on the same CAN bus. Flash CANopen firmware before importing this EDS.
+  The production Python product still uses GCSP v1 (<span class="mono">GrafitoCANStepper_C3.ino</span>, firmware 1.12). PLC / EDS support is the separate CANopen sketch (<span class="mono">GrafitoCANStepper_C3_CANopen</span>, firmware 2.1 — S-curve, Ka, encoder LUT). Do not mix GCSP and CANopen nodes on the same CAN bus. Flash CANopen firmware before importing this EDS.
 </div>
 
 <h2>Contents</h2>
@@ -144,7 +144,7 @@
   <tr><td>Vendor number</td><td><span class="mono">0x000005A3</span></td><td>Development placeholder. Register a real CiA vendor ID before a production EDS</td></tr>
   <tr><td>Product name</td><td>Grafito CANStepper C3</td><td></td></tr>
   <tr><td>Product number</td><td><span class="mono">0x00004333</span></td><td>Object 0x1018:02</td></tr>
-  <tr><td>Revision</td><td><span class="mono">0x00020000</span></td><td>Firmware 2.0.0</td></tr>
+  <tr><td>Revision</td><td><span class="mono">0x00020100</span></td><td>Firmware 2.1.0</td></tr>
   <tr><td>Order code</td><td>GRAFITO-CANSTEPPER-C3</td><td></td></tr>
   <tr><td>Device type 0x1000</td><td><span class="mono">0x00040192</span></td><td>Stepper + CiA 402</td></tr>
   <tr><td>Device name 0x1008</td><td>CANStepper</td><td></td></tr>
@@ -157,13 +157,13 @@
   <tr><th>Quantity</th><th>Unit</th><th>Conversion</th></tr>
   <tr><td>Position (0x6064, 0x607A)</td><td>encoder counts</td><td>16384 counts = 360° = 1 motor revolution</td></tr>
   <tr><td>Velocity (0x606C, 0x60FF, 0x6081)</td><td>counts / second</td><td>deg/s = counts/s × 360 / 16384</td></tr>
-  <tr><td>Acceleration (0x6083, 0x6084, 0x6085)</td><td>counts / s²</td><td>same scale. Default 131072 ≈ 2880 °/s²</td></tr>
+  <tr><td>Acceleration (0x6083, 0x6084, 0x6085)</td><td>counts / s²</td><td>same scale. Default 65536 ≈ 1440 °/s² (0x6085 quick-stop remains 262144)</td></tr>
 </table>
 <p>Examples: 90° = 4096 counts. 10° ≈ 455 counts. 720 °/s = 32768 counts/s (the default profile velocity).</p>
 
 <div class="tip">
   <strong>First practical step</strong>
-  Flash firmware 2.0, apply 24 V Vin (USB is data only), terminate the two physical ends of the CAN bus, set the PLC bitrate to 1 Mbps, import the EDS, set node ID 1, then read 0x1000 and 0x1018 before you try to move.
+  Flash firmware 2.1, apply 24 V Vin (USB is data only), terminate the two physical ends of the CAN bus, set the PLC bitrate to 1 Mbps, import the EDS, set node ID 1, then read 0x1000 and 0x1018 before you try to move.
 </div>
 
 <!-- ============================================================ -->
@@ -192,18 +192,18 @@
 <ul>
   <li><strong>MandatoryObjects</strong> — 0x1000, 0x1001, 0x1018 (CiA 301 requires these)</li>
   <li><strong>OptionalObjects</strong> — communication + CiA 402 objects</li>
-  <li><strong>ManufacturerObjects</strong> — Grafito-specific 0x2000–0x2019</li>
+  <li><strong>ManufacturerObjects</strong> — Grafito-specific 0x2000–0x201F</li>
 </ul>
 <p>If an index is in the file but missing from these lists, many importers reject the EDS.</p>
 
 <h4>DCF extras (not in the EDS)</h4>
 <p>The DCF is the EDS plus a commissioned instance. Extra sections:</p>
 <ul>
-  <li><strong>DeviceComissioning</strong> (CiA spelling) — NodeID=1, Baudrate=1000 (kbit/s), NetworkName=GrafitoCAN</li>
-  <li><strong>LastEDS</strong> — points at <span class="mono">GrafitoCANStepper.eds</span></li>
-  <li><strong>ParameterValue</strong> on every object — the live instance. <span class="mono">DefaultValue</span> stays the factory EDS default. For node 1 they usually match; for another node ID the COB-IDs and 0x2000 differ.</li>
+  <li><strong>DeviceComissioning</strong> (CiA spelling) — NodeID=1 or 2, Baudrate=1000 (kbit/s), NetworkName=GrafitoCAN</li>
+  <li><strong>LastEDS</strong> — points at <span class="mono">GrafitoCANStepper.eds</span> (firmware 2.1, FileRevision 2, identity revision 0x00020100). Delete any 2.0 EDS already in the PLC.</li>
+  <li><strong>ParameterValue</strong> on every object — the live instance. <span class="mono">DefaultValue</span> stays the factory EDS default. Node 2 COB-IDs are 0x82 / 0x602 / 0x582 / 0x202 / 0x302 / 0x182 / 0x282. Commissioned <span class="mono">0x200C = 0</span> so HOME does not kill the first jog.</li>
 </ul>
-<p>Regenerate a DCF for another node with <span class="mono">render_dcf(node_id=N)</span>. Do not hand-edit COB-IDs; they are <span class="mono">0x80+N</span>, <span class="mono">0x180+N</span>, <span class="mono">0x200+N</span>, …</p>
+<p>Regenerate a DCF for another node with <span class="mono">render_dcf(node_id=N)</span>. Do not hand-edit COB-IDs; they are <span class="mono">0x80+N</span>, <span class="mono">0x180+N</span>, <span class="mono">0x200+N</span>, … Flash the matching factory node ID (<span class="mono">-DCO_FACTORY_NODE_ID=2</span> for Node2.dcf).</p>
 
 <h3>2.2 Anatomy of one object</h3>
 <pre>[6040]
@@ -236,7 +236,7 @@ PDOMapping=1            ; 1 = may be mapped into a PDO
   <tr><td>0x1000</td><td>Device Type</td><td>ro</td><td>Must read 0x00040192</td></tr>
   <tr><td>0x1001</td><td>Error Register</td><td>ro</td><td>Bit0 generic, bit1 current, bit3 temp, bit5 profile</td></tr>
   <tr><td>0x1005</td><td>COB-ID SYNC</td><td>rw</td><td>Default 0x080. SYNC not required for event-driven PDOs</td></tr>
-  <tr><td>0x1008 / 09 / 0A</td><td>Name, HW, SW version</td><td>ro</td><td>CANStepper / C3 / 2.0.0</td></tr>
+  <tr><td>0x1008 / 09 / 0A</td><td>Name, HW, SW version</td><td>ro</td><td>CANStepper / C3 / 2.1.0</td></tr>
   <tr><td>0x1014</td><td>COB-ID EMCY</td><td>ro</td><td>0x080 + node ID</td></tr>
   <tr><td>0x1017</td><td>Producer heartbeat time</td><td>rw</td><td>Milliseconds. Default 1000. 0 = off</td></tr>
   <tr><td>0x1018:01–04</td><td>Identity</td><td>ro</td><td>Vendor, product, revision, serial</td></tr>
@@ -266,15 +266,21 @@ PDOMapping=1            ; 1 = may be mapped into a PDO
   <tr><td>0x200C</td><td>Endstop enable</td><td>U8</td><td>1</td><td>GPIO8 / HOME</td></tr>
   <tr><td>0x200D</td><td>Endstop active high</td><td>U8</td><td>1</td><td>Pressed = GPIO8 HIGH</td></tr>
   <tr><td>0x200E</td><td>CAN bitrate</td><td>U32</td><td>1000000</td><td>125000 / 250000 / 500000 / 1000000</td></tr>
-  <tr><td>0x200F–2011</td><td>PID Kp / Ki / Kd</td><td>R32</td><td>12 / 0.3 / 0.10</td><td>Closed-loop tracking</td></tr>
+  <tr><td>0x200F–2011</td><td>PID Kp / Ki / Kd</td><td>R32</td><td>10 / 0.3 / 0.35</td><td>Closed-loop tracking (fw 2.1)</td></tr>
   <tr><td>0x2012</td><td>PID tolerance</td><td>R32</td><td>0.35</td><td>Degrees</td></tr>
   <tr><td>0x2013</td><td>Enable on boot</td><td>U8</td><td>0</td><td>Keep 0 so coils stay off until 402 enable</td></tr>
   <tr><td>0x2014</td><td>Zero on boot</td><td>U8</td><td>0</td><td></td></tr>
   <tr><td>0x2015</td><td>Homing timeout</td><td>U32</td><td>30000</td><td>Milliseconds</td></tr>
-  <tr><td>0x2016</td><td>Firmware version</td><td>U16 ro</td><td>0x0200</td><td>Major in high byte</td></tr>
+  <tr><td>0x2016</td><td>Firmware version</td><td>U16 ro</td><td>0x0201</td><td>Major in high byte (2.1)</td></tr>
   <tr><td>0x2017</td><td>Encoder OK</td><td>U8 ro</td><td>1</td><td></td></tr>
   <tr><td>0x2018</td><td>Endstop active</td><td>U8 ro</td><td>0</td><td>Logical HOME after polarity</td></tr>
   <tr><td>0x2019</td><td>Bus voltage</td><td>R32 ro</td><td>24.0</td><td>Reported rail; C3 has no VBUS ADC</td></tr>
+  <tr><td>0x201A</td><td>PID Ka</td><td>R32</td><td>0.04</td><td>Acceleration feedforward (seconds)</td></tr>
+  <tr><td>0x201B</td><td>Profile jerk</td><td>R32</td><td>0</td><td>Deg/s³; 0 = auto amax/0.05 s</td></tr>
+  <tr><td>0x201C</td><td>LUT enable</td><td>U8</td><td>0</td><td>Requires valid table (0x201E)</td></tr>
+  <tr><td>0x201D</td><td>LUT command</td><td>U8 wo</td><td>—</td><td>0 cal, 1 enable, 2 disable, 3 clear</td></tr>
+  <tr><td>0x201E</td><td>LUT valid</td><td>U8 ro</td><td>0</td><td>1 after successful calibration</td></tr>
+  <tr><td>0x201F</td><td>LUT peak INL</td><td>R32 ro</td><td>0</td><td>Degrees</td></tr>
 </table>
 
 <div class="warn">
@@ -536,8 +542,8 @@ END_IF
   <tr><td>0x606C</td><td>Velocity Actual Value</td><td>I32</td><td>ro</td><td>yes</td><td>0</td></tr>
   <tr><td>0x607A</td><td>Target Position</td><td>I32</td><td>rw</td><td>yes</td><td>0</td></tr>
   <tr><td>0x6081</td><td>Profile Velocity</td><td>U32</td><td>rw</td><td>no</td><td>32768</td></tr>
-  <tr><td>0x6083</td><td>Profile Acceleration</td><td>U32</td><td>rw</td><td>no</td><td>131072</td></tr>
-  <tr><td>0x6084</td><td>Profile Deceleration</td><td>U32</td><td>rw</td><td>no</td><td>131072</td></tr>
+  <tr><td>0x6083</td><td>Profile Acceleration</td><td>U32</td><td>rw</td><td>no</td><td>65536</td></tr>
+  <tr><td>0x6084</td><td>Profile Deceleration</td><td>U32</td><td>rw</td><td>no</td><td>65536</td></tr>
   <tr><td>0x6085</td><td>Quick Stop Deceleration</td><td>U32</td><td>rw</td><td>no</td><td>262144</td></tr>
   <tr><td>0x6098</td><td>Homing Method</td><td>I8</td><td>rw</td><td>no</td><td>35</td></tr>
   <tr><td>0x6099:1/2</td><td>Homing speeds</td><td>U32</td><td>rw</td><td>no</td><td>2275 / 455</td></tr>
@@ -560,7 +566,7 @@ END_IF
 <table>
   <tr><th>Symptom</th><th>Likely cause</th><th>What to do</th></tr>
   <tr><td>EDS import fails</td><td>Wrong encoding, missing object list</td><td>Use the generated file as-is; ASCII only</td></tr>
-  <tr><td>Scan finds nothing</td><td>Wrong bitrate, termination, GCSP still flashed</td><td>Confirm boot line “CANopen fw 2.0”, 1 Mbps, 120 Ω</td></tr>
+  <tr><td>Scan finds nothing</td><td>Wrong bitrate, termination, GCSP still flashed</td><td>Confirm boot line “CANopen fw 2.1”, 1 Mbps, 120 Ω</td></tr>
   <tr><td>SDO abort 0x06020000</td><td>Tool writing an object not in this subset</td><td>Disable that object in the PLC device</td></tr>
   <tr><td>PDOs silent</td><td>NMT still pre-op</td><td>Send NMT Start 0x01</td></tr>
   <tr><td>Enable does nothing</td><td>Skipped 6→7→15</td><td>Read 0x6041 after each write</td></tr>
@@ -580,7 +586,7 @@ python3 -m pytest tests/test_canopen.py
 <h3>6.5 Learning path (use this document in order)</h3>
 <ol>
   <li>Part 1 until you can explain EDS vs firmware vs CAN wire.</li>
-  <li>Flash 2.0 and read 0x1000 / 0x1018 (USB script or PLC scan).</li>
+  <li>Flash 2.1 and read 0x1000 / 0x1018 (USB script or PLC scan).</li>
   <li>Part 3: perform 6 → 7 → 15 and watch 0x6041.</li>
   <li>One 10° move with low 0x6081 after invert is confirmed.</li>
   <li>Part 4: switch the same move onto RPDO1 / TPDO1.</li>
@@ -588,7 +594,7 @@ python3 -m pytest tests/test_canopen.py
 </ol>
 
 <p class="footer-note">
-  Document generated for Grafito CANStepper C3 firmware 2.0, GrafitoCANStepper.eds (EDS 4.0) and GrafitoCANStepper_Node1.dcf.<br>
+  Document generated for Grafito CANStepper C3 firmware 2.1, GrafitoCANStepper.eds (EDS 4.0) and GrafitoCANStepper_Node1.dcf.<br>
   Companion files: object_dictionary.json / .csv, canopen_stack.h, canopen402.py, tools/canopen_bringup.py.<br>
   Standards referenced: CiA 301 (application layer), CiA 306 (EDS/DCF), CiA 402 (drives). Grafito implements a subset, not a full certified stack.
 </p>

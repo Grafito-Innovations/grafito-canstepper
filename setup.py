@@ -10,7 +10,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="grafito-canstepper",
-    version="0.2.2",
+    version="0.2.3",
     description="Host library for Grafito CANStepper boards (GCSP v1)",
     packages=find_packages(include=("canstepper", "canstepper.*")),
     package_data={"canstepper": ["py.typed"]},

@@ -2,7 +2,7 @@
 
 These tests are the contract for Codesys / TwinCAT / TIA import of
 GrafitoCANStepper.eds. They run against the in-process slave that matches
-firmware 2.0.
+firmware 2.1.
 """
 
 from __future__ import annotations

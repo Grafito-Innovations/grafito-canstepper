@@ -15,11 +15,10 @@
  *  - HOME/endstop switch on IO8: configurable enable, polarity and action
  *    (report / stop / stop+zero), plus endstop-based homing (HOME command).
  *  - Homing methods: 0 = zero here, 1 = physical endstop, 2 = StallGuard.
- *  - Closed-loop position control (fw ≥1.2): rest-to-rest trapezoidal
- *    trajectory (accel → cruise → decel) generates a position reference
- *    r(t) and velocity feedforward v_ff(t). A light PI + D-on-velocity
- *    tracks the encoder to r(t). Command: v = v_ff + PID(r − encoder).
- *    FOLLOW mode uses a continuous braking-law chase (no replan thrash).
+ *  - Closed-loop position (fw ≥1.11): rest-to-rest 7-segment S-curve
+ *    (jerk-limited a(t)) generates r(t), v_ff(t), a_ff(t). Command:
+ *    v = v_ff + Ka·a_ff + PID(r − encoder). Optional 200-step MT6701 LUT
+ *    (fw ≥1.10) linearizes detent INL. FOLLOW uses a braking-law chase.
  *  - Leader/follower: a node can track another node's broadcast POSITION
  *    telemetry (gear ratio, invert, optional encoder correction).
  *  - CAN bus-off self-recovery (a node powered alone must not go mute).
@@ -58,7 +57,7 @@
 // Firmware / protocol identity
 // ============================================================================
 static const uint8_t FW_MAJOR  = 1;
-static const uint8_t FW_MINOR  = 9;  // 1.9: low-power boot — motors off, low hold, freewheel
+static const uint8_t FW_MINOR  = 12;  // 1.12: measured precision defaults (S-curve+Ka+LUT)
 static const uint8_t PROTO_VER = 1;
 
 // ============================================================================
@@ -96,6 +95,8 @@ enum Cmd : uint8_t {
   CMD_LOAD_DEFAULTS = 12,
   CMD_FOLLOW        = 13,  // u8 en, u8 leader, u8 flags, u8 rsvd, f32 ratio
   CMD_FOLLOW_SYNC   = 14,
+  CMD_SET_POSITION  = 15,  // f64 logical angle here; shaft does not move
+  CMD_LUT           = 16,  // u8 action: 0 cal, 1 enable, 2 disable, 3 clear
 };
 
 enum Tel : uint8_t {
@@ -111,6 +112,7 @@ enum Tel : uint8_t {
   TEL_CAN_HEALTH    = 41,  // u8 state, u8 tx_err, u8 rx_err, u8 recov, u16, u16
   TEL_ENC_COUNTS    = 42,  // i64 multi-turn encoder counts (RTR)
   TEL_PID_STATUS    = 43,  // u8 state, u8 fault, f32 output deg/s
+  TEL_LUT_STATUS    = 44,  // u8 valid, u8 enabled, u16 n, f32 peak_inl_deg
 };
 
 // TEL_DRIVER layout (little-endian, 8 bytes) — GCSP fw ≥1.4
@@ -138,11 +140,12 @@ enum Event : uint8_t {
   EVT_BOOT = 1, EVT_ENDSTOP_HIT = 2, EVT_ENDSTOP_RELEASED = 3, EVT_STALL = 4,
   EVT_HOMING_DONE = 5, EVT_HOMING_FAILED = 6, EVT_MOVE_DONE = 7,
   EVT_ESTOP = 8, EVT_FAULT = 9,
+  EVT_LUT_DONE = 10, EVT_LUT_FAILED = 11,
 };
 
 enum Mode : uint8_t {
   MODE_IDLE = 0, MODE_POSITION = 1, MODE_VELOCITY = 2,
-  MODE_HOMING = 3, MODE_FOLLOW = 4,
+  MODE_HOMING = 3, MODE_FOLLOW = 4, MODE_LUT = 5,
 };
 
 enum Fault : uint8_t {
@@ -171,7 +174,7 @@ enum ParamId : uint8_t {
   P_MAX_SPEED           = 9,   // f32 deg/s used for position moves
   P_ACCELERATION        = 10,  // f32 deg/s^2
   P_CL_MAX_SPEED        = 11,  // f32 deg/s closed-loop cruise ceiling (default 720)
-  P_CL_MAX_ACCEL        = 12,  // f32 deg/s^2 accel while closed loop (default 2880)
+  P_CL_MAX_ACCEL        = 12,  // f32 deg/s^2 S-curve amax while closed loop (default 1440)
   P_PID_KP              = 13,  // f32
   P_PID_KI              = 14,  // f32
   P_PID_KD              = 15,  // f32
@@ -188,7 +191,10 @@ enum ParamId : uint8_t {
   P_HOMING_BACKOFF      = 26,  // f32 deg retreat after trigger
   P_HOMING_TIMEOUT_MS   = 27,  // u32
   P_STEALTHCHOP         = 28,  // u32 bool
-  PARAM_MAX             = 28,
+  P_LUT_ENABLE          = 29,  // u32 bool — apply 200-step encoder LUT
+  P_CL_MAX_JERK         = 30,  // f32 deg/s^3; 0 = auto (amax / 0.05 s)
+  P_PID_KA              = 31,  // f32 s — acceleration feedforward (v += Ka·a)
+  PARAM_MAX             = 31,
 };
 
 union ParamValue { uint32_t u; float f; };
@@ -213,13 +219,14 @@ static const ParamDef PARAM_DEFS[] = {
   { P_INVERT_DIR,          false, 0,       0,      1        },
   { P_CLOSED_LOOP,         false, 1,       0,      1        },
   { P_MAX_SPEED,           true,  720.0f,  0.001f, 1e9f     },
-  { P_ACCELERATION,        true,  2880.0f, 0.001f, 1e9f     },
+  { P_ACCELERATION,        true,  1440.0f, 0.001f, 1e9f     },
   { P_CL_MAX_SPEED,        true,  720.0f,  0.001f, 1e9f     },
-  { P_CL_MAX_ACCEL,        true,  2880.0f, 0.001f, 1e9f     },
-  // Tracking gains (velocity FF carries the move; PID trims residual).
-  { P_PID_KP,              true,  12.0f,   0.0f,   1e6f     },
+  { P_CL_MAX_ACCEL,        true,  1440.0f, 0.001f, 1e9f     },
+  // Tracking gains (S-curve v_ff + Ka·a_ff carry the move; PID trims residual).
+  // Defaults from PR42HS40-1204AF-02 @ 24 V, fw 1.11 bench (median |err| 0.13°).
+  { P_PID_KP,              true,  10.0f,   0.0f,   1e6f     },
   { P_PID_KI,              true,  0.3f,    0.0f,   1e6f     },
-  { P_PID_KD,              true,  0.10f,   0.0f,   1e6f     },
+  { P_PID_KD,              true,  0.35f,   0.0f,   1e6f     },
   { P_PID_TOLERANCE,       true,  0.35f,   0.001f, 360.0f   },
   { P_FAST_RATE_HZ,        false, 10,      0,      500      },
   { P_SLOW_RATE_HZ,        false, 1,       0,      500      },
@@ -233,6 +240,9 @@ static const ParamDef PARAM_DEFS[] = {
   { P_HOMING_BACKOFF,      true,  2.0f,    0.0f,   36000.0f },
   { P_HOMING_TIMEOUT_MS,   false, 30000,   100,    600000   },
   { P_STEALTHCHOP,         false, 1,       0,      1        },
+  { P_LUT_ENABLE,          false, 0,       0,      1        },
+  { P_CL_MAX_JERK,         true,  0.0f,    0.0f,   1e9f     },
+  { P_PID_KA,              true,  0.04f,   0.0f,   1.0f     },
 };
 static const size_t PARAM_COUNT = sizeof(PARAM_DEFS) / sizeof(PARAM_DEFS[0]);
 
@@ -274,6 +284,27 @@ static uint32_t encLastGoodUs = 0;
 // fault only if feedback is continuously unavailable for this long.
 static const uint32_t ENC_LOSS_TIMEOUT_US = 25000;  // five 200 Hz PID periods
 
+// 200-step encoder LUT (one entry per 1.8° motor detent)
+static const uint16_t LUT_N = 200;
+static const uint32_t LUT_MAGIC = 0x314C4547;  // 'GEL1'
+static const uint32_t LUT_SETTLE_MS = 60;
+static bool     lutValid = false;
+static bool     lutEnabled = false;
+static uint16_t lutE[200];
+static int32_t  lutU[201];
+static float    lutPeakInlDeg = 0.0f;
+static uint8_t  lutPhase = 0;       // 0 idle, 1 running
+static uint8_t  lutPass = 0;        // 0 forward, 1 reverse
+static uint16_t lutIndex = 0;
+static bool     lutNeedCapture = false;
+static uint32_t lutWaitMs = 0;
+static uint16_t lutFwd[200];
+static uint16_t lutRev[200];
+static uint32_t lutSavedClosed = 0;
+static uint32_t lutSavedStandstill = 0;
+static uint32_t lutSavedHold = 0;
+static uint32_t lutSavedEndstop = 0;
+
 // motion bookkeeping
 static double   targetDeg = 0.0;       // active position/homing/follow target
 static float    velTargetDegS = 0.0f;  // active velocity command
@@ -298,7 +329,7 @@ static float    pidBestErr = 1e30f;
 static uint32_t pidProgressMs = 0;
 static bool     pidStopping = false;   // waiting for stop before reversing
 
-// Rest-to-rest trapezoid: accel → cruise → decel (Klipper-style generator).
+// Rest-to-rest 7-segment S-curve (finite jerk) + velocity/accel feedforward.
 // POSITION moves plan once at beginPositionMove; FOLLOW uses online braking.
 static bool   trajActive = false;
 static bool   trajDone = true;
@@ -308,13 +339,15 @@ static float  trajSign = 1.0f;
 static float  trajDist = 0.0f;
 static float  trajVpeak = 0.0f;
 static float  trajA = 1.0f;
-static float  trajTacc = 0.0f;
-static float  trajTcruise = 0.0f;
-static float  trajTdec = 0.0f;
+static float  trajJ = 1.0f;
+static float  trajTj = 0.0f;           // jerk-in / jerk-out duration
+static float  trajTc = 0.0f;           // constant-accel duration
+static float  trajTv = 0.0f;           // cruise duration
 static float  trajTtot = 0.0f;
 static float  trajT = 0.0f;
 static double trajRef = 0.0;           // position reference r(t)
 static float  trajVff = 0.0f;          // velocity feedforward v_ff(t)
+static float  trajAff = 0.0f;          // acceleration feedforward a_ff(t)
 
 // endstop (GPIO8 / PIN_HOME — strapping pin, see file header)
 static bool     endstopActive = false;   // logical active (after polarity)
@@ -370,6 +403,13 @@ static inline double stepsPerDeg() {
 static inline double countsToDeg(int64_t c) { return (double)c * 360.0 / ENC_CPR; }
 static inline double encoderDeg() { return countsToDeg(encCounts); }
 
+static void lutFail(uint8_t reason);
+static void lutBegin();
+static void lutService();
+static void lutClear();
+static void lutLoadNvs();
+static void lutSaveNvs();
+
 static void IRAM_ATTR onDiagRise() { stallFlag = true; }
 
 // ============================================================================
@@ -385,6 +425,49 @@ static uint8_t crc6_itu(uint32_t data18) {
     if (bit ^ msb) crc ^= 0x03;
   }
   return crc;
+}
+
+static int32_t lutUnwrapDelta(int32_t a, int32_t b) {
+  int32_t d = (b - a) % ENC_CPR;
+  if (d < 0) d += ENC_CPR;
+  if (d > ENC_CPR / 2) d -= ENC_CPR;
+  return d;
+}
+
+static void lutRebuild() {
+  if (!lutValid) return;
+  lutU[0] = (int32_t)lutE[0];
+  for (uint16_t k = 1; k < LUT_N; k++)
+    lutU[k] = lutU[k - 1] + lutUnwrapDelta(lutE[k - 1], lutE[k]);
+  lutU[LUT_N] = lutU[0] + ENC_CPR;
+  float peak = 0.0f;
+  for (uint16_t k = 0; k < LUT_N; k++) {
+    float meas = (float)(lutU[k] - lutU[0]);
+    float expect = (float)k * ((float)ENC_CPR / (float)LUT_N);
+    float err = fabsf(meas - expect) * 360.0f / (float)ENC_CPR;
+    if (err > peak) peak = err;
+  }
+  lutPeakInlDeg = peak;
+}
+
+static uint16_t lutApply(uint16_t raw) {
+  if (!lutValid || !lutEnabled) return raw;
+  int32_t q = lutU[0] + lutUnwrapDelta(lutE[0], (int32_t)raw);
+  while (q < lutU[0]) q += ENC_CPR;
+  while (q >= lutU[0] + ENC_CPR) q -= ENC_CPR;
+  uint16_t lo = 0, hi = LUT_N;
+  while ((uint16_t)(lo + 1) < hi) {
+    uint16_t mid = (uint16_t)((lo + hi) >> 1);
+    if (lutU[mid] <= q) lo = mid;
+    else hi = mid;
+  }
+  int32_t u0 = lutU[lo];
+  int32_t u1 = lutU[lo + 1];
+  float frac = (u1 == u0) ? 0.0f : (float)(q - u0) / (float)(u1 - u0);
+  float cal = ((float)lo + frac) * ((float)ENC_CPR / (float)LUT_N);
+  int32_t ic = (int32_t)lroundf(cal) % ENC_CPR;
+  if (ic < 0) ic += ENC_CPR;
+  return (uint16_t)ic;
 }
 
 static uint32_t encoderReadFrame() {
@@ -427,7 +510,18 @@ static bool encoderUpdate() {
   else if ((int32_t)prevRaw < quarter && (int32_t)raw > 3 * quarter) turns--;
   prevRaw = raw;
 
-  encCounts = (int64_t)raw + (int64_t)turns * ENC_CPR - encZeroOffset;
+  // Unwrap from the raw 14-bit reading. The LUT is only a small INL
+  // correction on the single-turn remainder — adding lutApply() as if it
+  // were the wrap source double-counts a revolution when raw and calibrated
+  // wrap at different phases (saw +360° runaway on 180° moves).
+  int64_t rawUnwrapped = (int64_t)raw + (int64_t)turns * ENC_CPR;
+  int32_t corr = 0;
+  if (lutValid && lutEnabled) {
+    corr = (int32_t)lutApply(raw) - (int32_t)raw;
+    if (corr > ENC_CPR / 2) corr -= ENC_CPR;
+    if (corr < -ENC_CPR / 2) corr += ENC_CPR;
+  }
+  encCounts = rawUnwrapped + corr - encZeroOffset;
   return true;
 }
 
@@ -673,6 +767,16 @@ static void sendPidStatus() {
 static void sendTarget()    { canSend(TEL_TARGET, &targetDeg, 8); }
 static void sendEncCounts() { int64_t c = encCounts; canSend(TEL_ENC_COUNTS, &c, 8); }
 
+static void sendLutStatus() {
+  uint8_t p[8] = {0};
+  p[0] = lutValid ? 1 : 0;
+  p[1] = lutEnabled ? 1 : 0;
+  uint16_t n = lutValid ? LUT_N : 0;
+  memcpy(p + 2, &n, 2);
+  memcpy(p + 4, &lutPeakInlDeg, 4);
+  canSend(TEL_LUT_STATUS, p, 8);
+}
+
 // ============================================================================
 // Motion primitives
 // ============================================================================
@@ -729,6 +833,7 @@ static void setDriverEnabled(bool en) {
 }
 
 static void emergencyStop() {
+  if (lutPhase) lutFail(1);
   stopImmediate();
   driverEnabled = false;
   tmc.disable();
@@ -746,55 +851,88 @@ static void trajClear() {
   trajDone = true;
   trajT = 0.0f;
   trajVff = 0.0f;
+  trajAff = 0.0f;
   trajVpeak = 0.0f;
   trajTtot = 0.0f;
 }
 
-// Plan a rest-to-rest trapezoid (or triangle if distance is short) from s0→s1.
+// Plan a rest-to-rest 7-segment S-curve from s0→s1 (jerk-limited a(t)).
 static void trajPlan(double s0, double s1, float vmax, float amax) {
   trajS0 = s0;
   trajS1 = s1;
   float d = (float)(s1 - s0);
   trajDist = fabsf(d);
   trajSign = (d >= 0.0f) ? 1.0f : -1.0f;
-  trajA = fmaxf(amax, 1.0f);
+  amax = fmaxf(amax, 1.0f);
   vmax = fmaxf(vmax, 0.001f);
   trajT = 0.0f;
   trajRef = s0;
   trajVff = 0.0f;
+  trajAff = 0.0f;
   trajActive = true;
 
   if (trajDist < 1e-4f) {
     trajVpeak = 0.0f;
-    trajTacc = trajTcruise = trajTdec = trajTtot = 0.0f;
+    trajTj = trajTc = trajTv = trajTtot = 0.0f;
     trajDone = true;
     trajRef = s1;
     return;
   }
 
-  // Full accel distance to vmax: v²/(2a). If 2× that exceeds the move, triangle.
-  float dAccFull = (vmax * vmax) / (2.0f * trajA);
-  if (2.0f * dAccFull >= trajDist) {
-    trajVpeak = sqrtf(trajA * trajDist);   // v²/a = dist  ⇒  v = √(a·dist)
-    trajTacc = trajVpeak / trajA;
-    trajTdec = trajTacc;
-    trajTcruise = 0.0f;
+  float J = pf(P_CL_MAX_JERK);
+  if (J < 1.0f) J = amax / 0.05f;          // auto: 50 ms to reach amax
+  J = fminf(J, amax / 0.005f);              // Tj ≥ 5 ms
+  J = fmaxf(J, amax / 0.20f);               // Tj ≤ 200 ms
+  float A = amax;
+  float V = vmax;
+  float Tj = A / J;
+  float Tc, Tv;
+
+  if (V / A < Tj) {
+    A = sqrtf(V * J);
+    if (A > amax) A = amax;
+    Tj = A / J;
+    Tc = fmaxf(0.0f, V / A - Tj);
   } else {
-    trajVpeak = vmax;
-    trajTacc = vmax / trajA;
-    trajTdec = trajTacc;
-    trajTcruise = (trajDist - 2.0f * dAccFull) / vmax;
+    Tc = V / A - Tj;
   }
-  trajTtot = trajTacc + trajTcruise + trajTdec;
+  V = A * (Tc + Tj);
+  float sAcc = 0.5f * A * Tc * Tc + 1.5f * A * Tj * Tc + A * Tj * Tj;
+
+  if (2.0f * sAcc <= trajDist) {
+    Tv = (trajDist - 2.0f * sAcc) / fmaxf(V, 1e-6f);
+  } else {
+    Tv = 0.0f;
+    float disc = Tj * Tj + 4.0f * trajDist / A;
+    Tc = (-3.0f * Tj + sqrtf(fmaxf(disc, 0.0f))) * 0.5f;
+    if (Tc < 0.0f) {
+      Tc = 0.0f;
+      Tj = cbrtf(trajDist / (2.0f * J));
+      A = J * Tj;
+      V = J * Tj * Tj;
+    } else {
+      V = A * (Tc + Tj);
+    }
+  }
+  if (V > vmax) V = vmax;
+
+  trajJ = J;
+  trajA = A;
+  trajVpeak = V;
+  trajTj = Tj;
+  trajTc = Tc;
+  trajTv = Tv;
+  trajTtot = 4.0f * Tj + 2.0f * Tc + Tv;
   trajDone = false;
 }
 
-// Advance the trapezoid by dt; updates trajRef and trajVff.
+// Advance the S-curve by dt; updates r(t), v_ff, a_ff.
 static void trajAdvance(float dt) {
   if (!trajActive) return;
   if (trajDone) {
     trajRef = trajS1;
     trajVff = 0.0f;
+    trajAff = 0.0f;
     return;
   }
   trajT += dt;
@@ -803,31 +941,72 @@ static void trajAdvance(float dt) {
     trajDone = true;
     trajRef = trajS1;
     trajVff = 0.0f;
+    trajAff = 0.0f;
     return;
   }
 
-  float t = trajT;
-  float sLocal, vLocal;
-  float dAcc = 0.5f * trajA * trajTacc * trajTacc;
+  const float J = trajJ, A = trajA, V = trajVpeak;
+  const float Tj = trajTj, Tc = trajTc, Tv = trajTv;
+  const float T1 = Tj;
+  const float T2 = T1 + Tc;
+  const float T3 = T2 + Tj;
+  const float T4 = T3 + Tv;
+  const float T5 = T4 + Tj;
+  const float T6 = T5 + Tc;
+  const float t = trajT;
+  float sLocal, vLocal, aLocal;
+  const float v1 = 0.5f * A * Tj;
+  const float s1 = A * Tj * Tj / 6.0f;
+  const float v2 = v1 + A * Tc;
+  const float s2 = s1 + v1 * Tc + 0.5f * A * Tc * Tc;
+  const float s3 = s2 + v2 * Tj + (1.0f / 3.0f) * A * Tj * Tj;
+  const float s4 = s3 + V * Tv;
+  const float v5 = V - v1;
+  const float s5 = s4 + V * Tj - s1;
+  const float v6 = v5 - A * Tc;
+  const float s6 = s5 + v5 * Tc - 0.5f * A * Tc * Tc;
 
-  if (t <= trajTacc + 1e-9f) {
-    vLocal = trajA * t;
-    sLocal = 0.5f * trajA * t * t;
-  } else if (t <= trajTacc + trajTcruise + 1e-9f) {
-    float tc = t - trajTacc;
-    vLocal = trajVpeak;
-    sLocal = dAcc + trajVpeak * tc;
+  if (t <= T1 + 1e-9f) {
+    aLocal = J * t;
+    vLocal = 0.5f * J * t * t;
+    sLocal = J * t * t * t / 6.0f;
+  } else if (t <= T2 + 1e-9f) {
+    float tau = t - T1;
+    aLocal = A;
+    vLocal = v1 + A * tau;
+    sLocal = s1 + v1 * tau + 0.5f * A * tau * tau;
+  } else if (t <= T3 + 1e-9f) {
+    float tau = t - T2;
+    aLocal = A - J * tau;
+    vLocal = v2 + A * tau - 0.5f * J * tau * tau;
+    sLocal = s2 + v2 * tau + 0.5f * A * tau * tau - J * tau * tau * tau / 6.0f;
+  } else if (t <= T4 + 1e-9f) {
+    float tau = t - T3;
+    aLocal = 0.0f;
+    vLocal = V;
+    sLocal = s3 + V * tau;
+  } else if (t <= T5 + 1e-9f) {
+    float tau = t - T4;
+    aLocal = -J * tau;
+    vLocal = V - 0.5f * J * tau * tau;
+    sLocal = s4 + V * tau - J * tau * tau * tau / 6.0f;
+  } else if (t <= T6 + 1e-9f) {
+    float tau = t - T5;
+    aLocal = -A;
+    vLocal = v5 - A * tau;
+    sLocal = s5 + v5 * tau - 0.5f * A * tau * tau;
   } else {
-    float td = t - trajTacc - trajTcruise;
-    vLocal = trajVpeak - trajA * td;
-    if (vLocal < 0.0f) vLocal = 0.0f;
-    float dCruise = trajVpeak * trajTcruise;
-    sLocal = dAcc + dCruise + trajVpeak * td - 0.5f * trajA * td * td;
+    float tau = t - T6;
+    aLocal = -A + J * tau;
+    vLocal = v6 - A * tau + 0.5f * J * tau * tau;
+    sLocal = s6 + v6 * tau - 0.5f * A * tau * tau + J * tau * tau * tau / 6.0f;
   }
+  if (vLocal < 0.0f) vLocal = 0.0f;
   if (sLocal > trajDist) sLocal = trajDist;
   if (sLocal < 0.0f) sLocal = 0.0f;
   trajRef = trajS0 + (double)(trajSign * sLocal);
   trajVff = trajSign * vLocal;
+  trajAff = trajSign * aLocal;
 }
 
 static void pidReset() {
@@ -911,10 +1090,10 @@ static void velocityService() {
 // ============================================================================
 // Closed-loop position controller (200 Hz)
 //
-// POSITION (fw ≥1.2): trapezoidal trajectory generator + velocity feedforward
-//   plan once at beginPositionMove (accel → cruise → decel, or triangle)
-//   each tick: r(t), v_ff(t) from the plan
-//   v_cmd = v_ff + Kp·(r − encoder) + Ki·∫ + (−Kd·v_meas)
+// POSITION (fw ≥1.11): 7-segment S-curve + velocity and acceleration FF
+//   plan once at beginPositionMove
+//   each tick: r(t), v_ff(t), a_ff(t) from the plan
+//   v_cmd = v_ff + Ka·a_ff + Kp·(r − encoder) + Ki·∫ − Kd·v_meas
 //   Settle when plan is done, |target−enc| ≤ tol, and |vel| is low.
 //
 // FOLLOW (encoder-corrected): continuous braking-law chase toward the
@@ -973,7 +1152,7 @@ static void pidService() {
 
   if (isPos && trajActive) {
     trajAdvance(dt);
-    vFf = trajVff;
+    vFf = trajVff + pf(P_PID_KA) * trajAff;
     trackErr = (float)(trajRef - measured);
     // After the plan finishes, hold the final target (same as trajS1).
     if (trajDone) {
@@ -1158,6 +1337,7 @@ static void endstopService() {
                 (unsigned)pu(P_ENDSTOP_ENABLE),
                 (unsigned)pu(P_ENDSTOP_ACTIVE_HIGH));
 
+  if (mode == MODE_LUT) return;
   if (!pu(P_ENDSTOP_ENABLE)) return;
 
   if (active) {
@@ -1287,6 +1467,222 @@ static void homingService() {
 }
 
 // ============================================================================
+// 200-step encoder LUT calibration
+// ============================================================================
+static void lutRestoreMotionParams() {
+  params[P_CLOSED_LOOP].u = lutSavedClosed;
+  params[P_STANDSTILL_MODE].u = lutSavedStandstill;
+  params[P_HOLD_CURRENT].u = lutSavedHold;
+  params[P_ENDSTOP_ENABLE].u = lutSavedEndstop;
+  tmc.setHoldCurrent(lutSavedHold);
+  switch (lutSavedStandstill) {
+    case 1: tmc.setStandstillMode(tmc.FREEWHEELING); break;
+    case 2: tmc.setStandstillMode(tmc.BRAKING); break;
+    case 3: tmc.setStandstillMode(tmc.STRONG_BRAKING); break;
+    default: tmc.setStandstillMode(tmc.NORMAL); break;
+  }
+  applySpeedAccel();
+}
+
+static void lutSaveNvs() {
+  uint8_t blob[4 + 2 + 2 + sizeof(lutE) + 4];
+  memset(blob, 0, sizeof(blob));
+  memcpy(blob, &LUT_MAGIC, 4);
+  uint16_t n = LUT_N;
+  memcpy(blob + 4, &n, 2);
+  uint16_t en = lutEnabled ? 1 : 0;
+  memcpy(blob + 6, &en, 2);
+  memcpy(blob + 8, lutE, sizeof(lutE));
+  memcpy(blob + 8 + sizeof(lutE), &lutPeakInlDeg, 4);
+  prefs.begin("gcsp", false);
+  prefs.putBytes("lut", blob, sizeof(blob));
+  prefs.putUInt("p29", params[P_LUT_ENABLE].u);
+  prefs.end();
+}
+
+static void lutLoadNvs() {
+  uint8_t blob[4 + 2 + 2 + sizeof(lutE) + 4];
+  prefs.begin("gcsp", true);
+  size_t n = prefs.getBytes("lut", blob, sizeof(blob));
+  prefs.end();
+  lutValid = false;
+  lutEnabled = false;
+  lutPeakInlDeg = 0.0f;
+  if (n < sizeof(blob)) return;
+  uint32_t magic = 0;
+  memcpy(&magic, blob, 4);
+  uint16_t pts = 0;
+  memcpy(&pts, blob + 4, 2);
+  if (magic != LUT_MAGIC || pts != LUT_N) return;
+  uint16_t en = 0;
+  memcpy(&en, blob + 6, 2);
+  memcpy(lutE, blob + 8, sizeof(lutE));
+  memcpy(&lutPeakInlDeg, blob + 8 + sizeof(lutE), 4);
+  lutValid = true;
+  lutRebuild();
+  lutEnabled = en && lutValid;
+  params[P_LUT_ENABLE].u = lutEnabled ? 1 : 0;
+}
+
+static void lutClear() {
+  lutValid = false;
+  lutEnabled = false;
+  lutPeakInlDeg = 0.0f;
+  params[P_LUT_ENABLE].u = 0;
+  memset(lutE, 0, sizeof(lutE));
+  prefs.begin("gcsp", false);
+  prefs.remove("lut");
+  prefs.putUInt("p29", 0);
+  prefs.end();
+}
+
+static bool lutSampleRaw(uint16_t *out) {
+  uint32_t frame = encoderReadFrame();
+  uint16_t raw = (frame >> 10) & 0x3FFF;
+  uint8_t rxCrc = frame & 0x3F;
+  bool stuck = (frame == 0x000000) || ((frame & 0xFFFFC0) == 0xFFFFC0);
+  bool crcOk = (crc6_itu((frame >> 6) & 0x3FFFF) == rxCrc);
+  if (!crcOk || stuck) return false;
+  *out = raw;
+  return true;
+}
+
+static void lutFail(uint8_t reason) {
+  if (lutPhase == 0) return;
+  lutPhase = 0;
+  lutRestoreMotionParams();
+  mode = MODE_IDLE;
+  sendEvent(EVT_LUT_FAILED, reason, 0.0f);
+  Serial.printf("# LUT failed reason=%u\n", reason);
+}
+
+static void lutMoveFullStep(int dir) {
+  if (!stepper) return;
+  int32_t ms = (int32_t)pu(P_MICROSTEPS);
+  if (ms < 1) ms = 1;
+  float spd = 90.0f;
+  float acc = fmaxf(pf(P_ACCELERATION), 720.0f);
+  uint32_t hz = (uint32_t)llround(spd * stepsPerDeg());
+  int32_t a = (int32_t)llround(acc * stepsPerDeg());
+  stepper->setSpeedInHz(hz < 1 ? 1 : hz);
+  stepper->setAcceleration(a < 1 ? 1 : a);
+  int32_t cur = stepper->getCurrentPosition();
+  cmdDirSign = dir >= 0 ? 1 : -1;
+  stepper->moveTo(cur + dir * ms);
+}
+
+static bool lutFinalize() {
+  for (uint16_t k = 0; k < LUT_N; k++) {
+    int32_t mid = (int32_t)lutFwd[k] + lutUnwrapDelta(lutFwd[k], lutRev[k]) / 2;
+    mid %= ENC_CPR;
+    if (mid < 0) mid += ENC_CPR;
+    lutE[k] = (uint16_t)mid;
+  }
+  lutValid = true;
+  lutRebuild();
+  const int32_t minStep = 25;
+  const int32_t maxStep = 160;
+  for (uint16_t k = 0; k < LUT_N; k++) {
+    int32_t step = lutU[k + 1] - lutU[k];
+    if (step < minStep || step > maxStep) {
+      lutValid = false;
+      return false;
+    }
+  }
+  lutEnabled = true;
+  params[P_LUT_ENABLE].u = 1;
+  lutSaveNvs();
+  return true;
+}
+
+static void lutBegin() {
+  if (lutPhase != 0) {
+    sendEvent(EVT_LUT_FAILED, 4, 0.0f);
+    return;
+  }
+  if (!stepper || !driverEnabled || estopLatched) {
+    sendEvent(EVT_LUT_FAILED, 1, 0.0f);
+    return;
+  }
+  followEnabled = false;
+  followSynced = false;
+  homingPhase = 0;
+  stopImmediate();
+
+  lutSavedClosed = pu(P_CLOSED_LOOP);
+  lutSavedStandstill = pu(P_STANDSTILL_MODE);
+  lutSavedHold = pu(P_HOLD_CURRENT);
+  lutSavedEndstop = pu(P_ENDSTOP_ENABLE);
+  params[P_CLOSED_LOOP].u = 0;
+  params[P_ENDSTOP_ENABLE].u = 0;
+  uint32_t hold = pu(P_RUN_CURRENT);
+  if (hold < 25) hold = 25;
+  params[P_HOLD_CURRENT].u = hold;
+  tmc.setHoldCurrent(hold);
+  tmc.setStandstillMode(tmc.NORMAL);
+  lutEnabled = false;  // sample raw, not a previous table
+
+  mode = MODE_LUT;
+  lutPass = 0;
+  lutIndex = 0;
+  lutNeedCapture = true;
+  lutPhase = 1;
+  lutWaitMs = millis() + 80;
+  Serial.println("# LUT cal start (200 full steps fwd+rev)");
+}
+
+static void lutService() {
+  if (lutPhase == 0 || mode != MODE_LUT || !stepper) return;
+  if (estopLatched) { lutFail(1); return; }
+  if (stepper->isRunning()) return;
+  if ((int32_t)(millis() - lutWaitMs) < 0) return;
+
+  if (lutNeedCapture) {
+    uint16_t raw = 0;
+    if (!lutSampleRaw(&raw)) { lutFail(2); return; }
+    if (lutPass == 0) lutFwd[lutIndex] = raw;
+    else lutRev[lutIndex] = raw;
+    lutNeedCapture = false;
+    if ((lutIndex % 20) == 0)
+      Serial.printf("# LUT pass=%u idx=%u raw=%u\n", lutPass, lutIndex, raw);
+
+    if (lutPass == 0) {
+      if (lutIndex < LUT_N - 1) {
+        lutIndex++;
+        lutMoveFullStep(+1);
+        lutNeedCapture = true;
+        lutWaitMs = millis() + LUT_SETTLE_MS;
+      } else {
+        lutPass = 1;
+        lutNeedCapture = true;
+        lutWaitMs = millis() + 10;
+      }
+    } else {
+      if (lutIndex > 0) {
+        lutIndex--;
+        lutMoveFullStep(-1);
+        lutNeedCapture = true;
+        lutWaitMs = millis() + LUT_SETTLE_MS;
+      } else {
+        bool ok = lutFinalize();
+        lutPhase = 0;
+        lutRestoreMotionParams();
+        mode = MODE_IDLE;
+        cmdDirSign = 0;
+        if (ok) {
+          sendEvent(EVT_LUT_DONE, 0, lutPeakInlDeg);
+          Serial.printf("# LUT done peak_INL=%.3f deg\n", lutPeakInlDeg);
+        } else {
+          sendEvent(EVT_LUT_FAILED, 3, 0.0f);
+          Serial.println("# LUT failed: detent spacing out of range");
+        }
+      }
+    }
+    return;
+  }
+}
+
+// ============================================================================
 // Leader/follower
 // ============================================================================
 static void followReset(bool stopMotor) {
@@ -1379,6 +1775,7 @@ static uint8_t paramApply(uint8_t id, ParamValue v) {
   if (d->isFloat && !isfinite(v.f)) return PS_REJECTED;
   if (asF < d->minv || asF > d->maxv) return PS_REJECTED;
   if (id == P_MICROSTEPS && !isPowerOfTwo(v.u)) return PS_REJECTED;
+  if (id == P_LUT_ENABLE && v.u && !lutValid) return PS_REJECTED;
 
   params[id] = v;
 
@@ -1423,6 +1820,9 @@ static uint8_t paramApply(uint8_t id, ParamValue v) {
     case P_STEALTHCHOP:
       if (v.u) tmc.enableStealthChop(); else tmc.disableStealthChop();
       break;
+    case P_LUT_ENABLE:
+      lutEnabled = v.u != 0;
+      break;
     default: break;
   }
   return PS_OK;
@@ -1464,6 +1864,7 @@ static void paramsSaveNvs() {
     prefs.putUInt(key, params[d.id].u);
   }
   prefs.end();
+  if (lutValid) lutSaveNvs();
 }
 
 // ============================================================================
@@ -1481,6 +1882,7 @@ static void handleRtr(uint8_t msgId) {
     case TEL_CAN_HEALTH:    sendCanHealth(); break;
     case TEL_ENC_COUNTS:    encoderUpdate(); sendEncCounts(); break;
     case TEL_PID_STATUS:    sendPidStatus(); break;
+    case TEL_LUT_STATUS:    sendLutStatus(); break;
     default: break;
   }
 }
@@ -1490,6 +1892,7 @@ static void handleCommand(uint8_t msgId, const uint8_t *d, uint8_t len) {
     case CMD_PING: sendStatus(); break;
     case CMD_ESTOP: emergencyStop(); break;
     case CMD_STOP:
+      if (lutPhase) lutFail(1);
       homingPhase = 0;
       moveDonePending = false;
       stopRamped();
@@ -1564,6 +1967,7 @@ static void handleCommand(uint8_t msgId, const uint8_t *d, uint8_t len) {
       params[P_NODE_ID] = v; nodeId = keepId;
       for (size_t i = 0; i < PARAM_COUNT; i++)
         paramApply(PARAM_DEFS[i].id, params[PARAM_DEFS[i].id]);
+      lutClear();
       paramsSaveNvs();
       break;
     }
@@ -1586,6 +1990,40 @@ static void handleCommand(uint8_t msgId, const uint8_t *d, uint8_t len) {
       break;
     case CMD_FOLLOW_SYNC:
       if (followEnabled) followReset(true);
+      break;
+    case CMD_SET_POSITION:
+      if (len >= 8) {
+        double deg; memcpy(&deg, d, 8);
+        if (!isfinite(deg)) break;
+        stopImmediate();
+        encoderUpdate();
+        int64_t want = (int64_t)llround(deg * (double)ENC_CPR / 360.0);
+        encZeroOffset += encCounts - want;
+        encCounts = want;
+        if (stepper) {
+          int64_t s = (int64_t)llround(deg * stepsPerDeg());
+          if (s > INT32_MAX) s = INT32_MAX;
+          if (s < INT32_MIN) s = INT32_MIN;
+          stepper->setCurrentPosition((int32_t)s);
+        }
+        targetDeg = deg;
+        mode = MODE_IDLE;
+      }
+      break;
+    case CMD_LUT:
+      if (len >= 1) {
+        uint8_t action = d[0];
+        if (action == 0) lutBegin();
+        else if (action == 1) {
+          if (!lutValid) sendEvent(EVT_LUT_FAILED, 3, 0.0f);
+          else { lutEnabled = true; params[P_LUT_ENABLE].u = 1; }
+        } else if (action == 2) {
+          lutEnabled = false;
+          params[P_LUT_ENABLE].u = 0;
+        } else if (action == 3) {
+          lutClear();
+        }
+      }
       break;
     default: break;
   }
@@ -1743,6 +2181,7 @@ void setup() {
 
   paramsLoadDefaults();
   paramsLoadNvs();
+  lutLoadNvs();
   // Hard defaults for this product wiring (override stale NVS from older fw).
   params[P_ENDSTOP_ENABLE].u = 1;
   params[P_ENDSTOP_ACTIVE_HIGH].u = 1;
@@ -1755,7 +2194,9 @@ void setup() {
   if (pu(P_HOLD_CURRENT) > 5) params[P_HOLD_CURRENT].u = 5;
   if (pu(P_RUN_CURRENT) > 40) params[P_RUN_CURRENT].u = 40;  // cap absurd bench peaks
   params[P_STANDSTILL_MODE].u = 1;  // FREEWHEELING
-  Serial.println("# HOME: INPUT_PULLUP + endstop enable=1 active_high=1 action=stop (fw 1.9)");
+  Serial.println("# HOME: INPUT_PULLUP + endstop enable=1 active_high=1 action=stop (fw 1.12)");
+  Serial.printf("# LUT: valid=%u enabled=%u peak_INL=%.3f deg\n",
+                lutValid ? 1u : 0u, lutEnabled ? 1u : 0u, lutPeakInlDeg);
   Serial.printf("# POWER: enable_on_boot=0 hold<=%u run<=%u standstill=freewheel (fw 1.9)\n",
                 (unsigned)pu(P_HOLD_CURRENT), (unsigned)pu(P_RUN_CURRENT));
 
@@ -1824,6 +2265,7 @@ void loop() {
   serialService();
   endstopService();
   homingService();
+  lutService();
   velocityService();
 
   if (stallFlag && mode != MODE_HOMING) {

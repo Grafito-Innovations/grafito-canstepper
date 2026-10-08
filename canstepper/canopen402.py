@@ -31,19 +31,22 @@ from typing import Dict, List, Optional, Tuple
 
 VENDOR_ID = 0x000005A3  # placeholder until a CiA vendor ID is registered
 PRODUCT_CODE = 0x00004333
-REVISION = 0x00020000  # firmware 2.0.0
+REVISION = 0x00020100  # firmware 2.1.0
 SERIAL_NUMBER = 0x00000001
 DEVICE_TYPE = 0x00040192  # stepper + CiA 402
 SUPPORTED_MODES = 0x00000025  # bit0 pp, bit2 pv, bit5 hm
 DEVICE_NAME = "CANStepper"
 HW_VERSION = "C3"
-SW_VERSION = "2.0.0"
+SW_VERSION = "2.1.0"
 PRODUCT_NAME = "Grafito CANStepper C3"
 VENDOR_NAME = "Grafito Innovations"
 ENC_CPR = 16384
 DEFAULT_NODE_ID = 1
 DEFAULT_HEARTBEAT_MS = 1000
 DEFAULT_BITRATE = 1_000_000
+# Bump when the customer EDS/DCF pack must be re-imported (distinct from the
+# broken 2.0 / FileRevision-1 files that did not match firmware 2.1).
+FILE_REVISION = 2
 
 EDS_FILENAME = "GrafitoCANStepper.eds"
 DCF_FILENAME = "GrafitoCANStepper_Node1.dcf"
@@ -59,8 +62,8 @@ def eds_path() -> Path:
     return _canopen_dir() / EDS_FILENAME
 
 
-def dcf_path() -> Path:
-    return _canopen_dir() / DCF_FILENAME
+def dcf_path(node_id: int = DEFAULT_NODE_ID) -> Path:
+    return _canopen_dir() / f"GrafitoCANStepper_Node{int(node_id)}.dcf"
 
 
 def od_json_path() -> Path:
@@ -341,8 +344,8 @@ def _od_table() -> List[OdEntry]:
         e(0x606C, 0, "Velocity Actual Value", DType.I32, "ro", 0, pdo=True),
         e(0x607A, 0, "Target Position", DType.I32, "rw", 0, pdo=True),
         e(0x6081, 0, "Profile Velocity", DType.U32, "rw", 32768, minimum=1),  # counts/s (~720 deg/s)
-        e(0x6083, 0, "Profile Acceleration", DType.U32, "rw", 131072, minimum=1),
-        e(0x6084, 0, "Profile Deceleration", DType.U32, "rw", 131072, minimum=1),
+        e(0x6083, 0, "Profile Acceleration", DType.U32, "rw", 65536, minimum=1),
+        e(0x6084, 0, "Profile Deceleration", DType.U32, "rw", 65536, minimum=1),
         e(0x6085, 0, "Quick Stop Deceleration", DType.U32, "rw", 262144, minimum=1),
         e(0x6098, 0, "Homing Method", DType.I8, "rw", HomingMethod.CURRENT_POSITION),
         e(0x6099, 0, "Homing Speeds Number of Entries", DType.U8, "ro", 2),
@@ -366,17 +369,23 @@ def _od_table() -> List[OdEntry]:
         e(0x200C, 0, "Endstop Enable", DType.U8, "rw", 1, maximum=1),
         e(0x200D, 0, "Endstop Active High", DType.U8, "rw", 1, maximum=1),
         e(0x200E, 0, "CAN Bitrate", DType.U32, "rw", DEFAULT_BITRATE),
-        e(0x200F, 0, "PID Kp", DType.R32, "rw", 12.0),
+        e(0x200F, 0, "PID Kp", DType.R32, "rw", 10.0),
         e(0x2010, 0, "PID Ki", DType.R32, "rw", 0.3),
-        e(0x2011, 0, "PID Kd", DType.R32, "rw", 0.10),
+        e(0x2011, 0, "PID Kd", DType.R32, "rw", 0.35),
         e(0x2012, 0, "PID Tolerance Deg", DType.R32, "rw", 0.35),
         e(0x2013, 0, "Enable On Boot", DType.U8, "rw", 0, maximum=1),
         e(0x2014, 0, "Zero On Boot", DType.U8, "rw", 0, maximum=1),
         e(0x2015, 0, "Homing Timeout ms", DType.U32, "rw", 30000, minimum=100, maximum=600000),
-        e(0x2016, 0, "Firmware Version", DType.U16, "ro", 0x0200),
+        e(0x2016, 0, "Firmware Version", DType.U16, "ro", 0x0201),
         e(0x2017, 0, "Encoder OK", DType.U8, "ro", 1),
         e(0x2018, 0, "Endstop Active", DType.U8, "ro", 0),
         e(0x2019, 0, "Bus Voltage", DType.R32, "ro", 24.0),
+        e(0x201A, 0, "PID Ka", DType.R32, "rw", 0.04),
+        e(0x201B, 0, "Profile Jerk Deg/s3", DType.R32, "rw", 0.0),
+        e(0x201C, 0, "LUT Enable", DType.U8, "rw", 0, maximum=1),
+        e(0x201D, 0, "LUT Command", DType.U8, "wo", 0, maximum=3),
+        e(0x201E, 0, "LUT Valid", DType.U8, "ro", 0),
+        e(0x201F, 0, "LUT Peak INL Deg", DType.R32, "ro", 0.0),
     ]
 
 
@@ -1167,21 +1176,22 @@ class SerialBridgeBus:
 
 _EDS_HEADER = """\
 ; Grafito CANStepper C3 - CANopen Electronic Data Sheet (CiA 306)
-; Matches firmware/GrafitoCANStepper_C3_CANopen (fw 2.0, CiA 402 subset).
+; Matches firmware/GrafitoCANStepper_C3_CANopen (fw 2.1, CiA 402 subset).
+; Replace any older GrafitoCANStepper.eds (fw 2.0 / revision 0x00020000).
 ; Vendor ID 0x000005A3 is a development placeholder. Register a CiA ID before
 ; shipping a production EDS.
 
 [FileInfo]
 FileName=GrafitoCANStepper.eds
 FileVersion=1
-FileRevision=0
+FileRevision={file_revision}
 EDSVersion=4.0
-Description=Grafito CANStepper C3 CiA 402
+Description=Grafito CANStepper C3 CiA 402 firmware 2.1
 CreationTime=12:00PM
 CreationDate=09-13-2026
 CreatedBy=Grafito Innovations
 ModificationTime=12:00PM
-ModificationDate=09-13-2026
+ModificationDate=10-08-2026
 ModifiedBy=Grafito Innovations
 
 [DeviceInfo]
@@ -1219,9 +1229,11 @@ Dummy0006=1
 Dummy0007=1
 
 [Comments]
-Lines=2
-Line1=Units: position = MT6701 encoder counts (16384 / rev).
-Line2=Supported 402 modes: pp (1), pv (3), hm (6).
+Lines=4
+Line1=Firmware 2.1 EDS (FileRevision {file_revision}, identity 0x00020100). Replace any older GrafitoCANStepper.eds (2.0 / revision 0x00020000) - those files will not import this board.
+Line2=Units: MT6701 encoder counts (16384 / rev). Supported 402 modes: pp (1), pv (3), hm (6).
+Line3=COB-IDs use $NODEID+... so the PLC can assign any node 1-127. For a pre-addressed node, import GrafitoCANStepper_NodeN.dcf instead.
+Line4=Enable 6 -> 7 -> 15. Bus 1 Mbps. Vin 5-24 V required; USB-C is data only.
 
 """
 
@@ -1256,6 +1268,7 @@ def render_eds() -> str:
             product_name=PRODUCT_NAME,
             product_code=PRODUCT_CODE,
             revision=REVISION,
+            file_revision=FILE_REVISION,
         )
     ]
 
@@ -1286,14 +1299,21 @@ def render_eds() -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+# TwinCAT / Codesys compare DeviceInfo Vendor/Product/Revision (8-digit hex)
+# against 0x1000 / 0x1018. Unpadded 0x20100 vs 0x00020100 fails identity scan.
+_IDENTITY_U32 = {(0x1000, 0), (0x1018, 1), (0x1018, 2), (0x1018, 3), (0x1018, 4)}
+
+
 def _format_od_value(entry: OdEntry, value: Optional[object] = None) -> str:
     v = entry.default if value is None else value
     if entry.dtype == DType.VIS:
         return str(v)
     if entry.dtype == DType.R32:
         return str(float(v))
-    ival = int(v)
-    return f"0x{ival & 0xFFFFFFFF:X}" if ival > 9 else str(ival)
+    ival = int(v) & 0xFFFFFFFF
+    if (entry.index, entry.sub) in _IDENTITY_U32:
+        return f"0x{ival:08X}"
+    return f"0x{ival:X}" if ival > 9 else str(ival)
 
 
 def _dtype_name(dtype: DType) -> str:
@@ -1330,6 +1350,18 @@ def instance_values(node_id: int = DEFAULT_NODE_ID) -> Dict[Tuple[int, int], obj
     values[(0x1401, 1)] = cob_rpdo2(node_id)
     values[(0x1800, 1)] = cob_tpdo1(node_id)
     values[(0x1801, 1)] = cob_tpdo2(node_id)
+    return values
+
+
+def dcf_instance_values(node_id: int = DEFAULT_NODE_ID) -> Dict[Tuple[int, int], object]:
+    """Commissioned DCF ParameterValues for a first PLC import.
+
+    Firmware factory DefaultValue for 0x200C stays 1. The DCF ships 0 so a
+    floating HOME pin does not kill the first jog (the 2.0 customer pack
+    failed here as well as on node-ID / identity mismatch).
+    """
+    values = instance_values(node_id)
+    values[(0x200C, 0)] = 0
     return values
 
 
@@ -1403,8 +1435,21 @@ def render_od_csv(node_id: int = DEFAULT_NODE_ID) -> str:
     return buf.getvalue()
 
 
+# CiA 306 placeholders. CODESYS adds the configured node ID on import.
+# Absolute defaults (0x201, 0x181, …) stay stuck on node 1.
+_EDS_COB_DEFAULTS = {
+    (0x1014, 0): "$NODEID+0x80",
+    (0x1200, 1): "$NODEID+0x600",
+    (0x1200, 2): "$NODEID+0x580",
+    (0x1400, 1): "$NODEID+0x200",
+    (0x1401, 1): "$NODEID+0x300",
+    (0x1800, 1): "$NODEID+0x180",
+    (0x1801, 1): "$NODEID+0x280",
+}
+
+
 def _render_var(entry: OdEntry, section: str, parameter_value: Optional[object] = None) -> str:
-    default_s = _format_od_value(entry)
+    default_s = _EDS_COB_DEFAULTS.get((entry.index, entry.sub), _format_od_value(entry))
     rows = [
         f"[{section}]",
         f"ParameterName={entry.name}",
@@ -1426,20 +1471,21 @@ def _render_var(entry: OdEntry, section: str, parameter_value: Optional[object] 
 
 _DCF_HEADER = """\
 ; Grafito CANStepper C3 - CANopen Device Configuration File (CiA 306 DCF)
-; Instance of GrafitoCANStepper.eds for a commissioned node.
-; Import this in the PLC after the EDS (or instead, if the tool accepts DCF).
+; Firmware 2.1 instance of GrafitoCANStepper.eds for node {node_id}.
+; Import the matching 2.1 EDS first (or this DCF if the tool accepts DCF).
+; Discard any older GrafitoCANStepper.eds / Node{node_id}.dcf (fw 2.0).
 
 [FileInfo]
 FileName={dcf_name}
 FileVersion=1
-FileRevision=0
+FileRevision={file_revision}
 EDSVersion=4.0
-Description=Grafito CANStepper C3 node {node_id} instance
+Description=Grafito CANStepper C3 node {node_id} instance, firmware 2.1
 CreationTime=12:00PM
 CreationDate=09-13-2026
 CreatedBy=Grafito Innovations
 ModificationTime=12:00PM
-ModificationDate=09-13-2026
+ModificationDate=10-08-2026
 ModifiedBy=Grafito Innovations
 LastEDS=GrafitoCANStepper.eds
 
@@ -1486,10 +1532,13 @@ Dummy0006=1
 Dummy0007=1
 
 [Comments]
-Lines=3
-Line1=Units: position = MT6701 encoder counts (16384 / rev).
-Line2=Supported 402 modes: pp (1), pv (3), hm (6).
-Line3=ParameterValue is the commissioned instance; DefaultValue is the factory EDS default.
+Lines=6
+Line1=Firmware 2.1 DCF (FileRevision {file_revision}, identity 0x00020100). Discard older EDS/DCF packs - they will not match this board.
+Line2=Flash GrafitoCANStepper_C3_CANopen with -DCO_FACTORY_NODE_ID={node_id} so NMT heartbeat is 0x{heartbeat:03X}. This file is only for node {node_id}.
+Line3=Bus 1 Mbps. Apply Vin 5-24 V (typically 24 V). USB-C is data only.
+Line4=Units: MT6701 encoder counts (16384 / rev). Modes: pp=1, pv=3, hm=6.
+Line5=Commissioned 0x200C=0 so the first jog is not killed by HOME. Enable 6 -> 7 -> 15. Set 0x2006=1 if direction is reversed.
+Line6=ParameterValue is this node instance (including COB-IDs). DefaultValue is the factory EDS default ($NODEID placeholders).
 
 """
 
@@ -1497,7 +1546,7 @@ Line3=ParameterValue is the commissioned instance; DefaultValue is the factory E
 def render_dcf(node_id: int = DEFAULT_NODE_ID, bitrate_bps: int = DEFAULT_BITRATE) -> str:
     if bitrate_bps not in (125_000, 250_000, 500_000, 1_000_000):
         raise ValueError("unsupported DCF bitrate")
-    values = instance_values(node_id)
+    values = dcf_instance_values(node_id)
     by_index: Dict[int, List[OdEntry]] = {}
     for entry in OD_ENTRIES.values():
         by_index.setdefault(entry.index, []).append(entry)
@@ -1518,6 +1567,8 @@ def render_dcf(node_id: int = DEFAULT_NODE_ID, bitrate_bps: int = DEFAULT_BITRAT
             node_id=node_id,
             dcf_name=f"GrafitoCANStepper_Node{node_id}.dcf",
             baud_k=bitrate_bps // 1000,
+            file_revision=FILE_REVISION,
+            heartbeat=0x700 + node_id,
         )
     ]
 
@@ -1564,7 +1615,7 @@ def write_eds(path: Optional[Path] = None) -> Path:
 
 
 def write_dcf(path: Optional[Path] = None, node_id: int = DEFAULT_NODE_ID) -> Path:
-    dest = path or dcf_path()
+    dest = path or dcf_path(node_id)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(render_dcf(node_id=node_id), encoding="ascii")
     return dest
@@ -1580,14 +1631,22 @@ def write_object_dictionary(node_id: int = DEFAULT_NODE_ID) -> Tuple[Path, Path]
 
 
 def write_canopen_descriptions(node_id: int = DEFAULT_NODE_ID) -> Dict[str, Path]:
-    """Write EDS + DCF + object-dictionary JSON/CSV from the same OD table."""
+    """Write EDS + Node1/Node2 DCF + object-dictionary JSON/CSV from the same OD."""
     od_json, od_csv = write_object_dictionary(node_id)
-    return {
+    paths: Dict[str, Path] = {
         "eds": write_eds(),
-        "dcf": write_dcf(node_id=node_id),
         "od_json": od_json,
         "od_csv": od_csv,
     }
+    written: Dict[int, Path] = {}
+    for n in (1, 2, node_id):
+        written[n] = write_dcf(node_id=n)
+    paths["dcf"] = written[node_id]
+    if 1 != node_id:
+        paths["dcf_node1"] = written[1]
+    if 2 != node_id:
+        paths["dcf_node2"] = written[2]
+    return paths
 
 
 def parse_eds(text: str) -> Dict[str, Dict[str, str]]:

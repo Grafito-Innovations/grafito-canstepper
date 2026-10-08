@@ -15,7 +15,7 @@ boards used three different connector types and are harder to cable.
 2. Flash `firmware/GrafitoCANStepper_C3` (ESP32-C3, **USB CDC On Boot: Enabled**)
    with Vin connected.
 3. Open a serial monitor once: you should see a boot banner like  
-   `# GrafitoCANStepper fw 1.2 proto 1` and an MT6701 self-check line with a
+   `# GrafitoCANStepper fw 1.12 proto 1` and an MT6701 self-check line with a
    live angle.
 4. CAN: termination is **enabled by default** (0 Ω jumper → 120 Ω path). For
    daisy-chain mid-nodes, **remove the 0 Ω resistor**; keep termination on the
@@ -42,7 +42,7 @@ pip install grafito-canstepper
 from canstepper import CANStepperBus
 
 bus = CANStepperBus.serial("/dev/ttyACM0")
-print(bus.discover())                        # {1: '1.2'}
+print(bus.discover())                        # {1: '1.12'}
 node = bus.node(1)
 node.enable()
 print(node.get_position())                   # encoder degrees
@@ -117,7 +117,7 @@ node.set_zero()
 node.move_to(720.0, blocking=True)
 ```
 
-### Quick matrix highlights (PR42HS40-1204AF-02, fw 1.2, 8 µstep, SpreadCycle)
+### Quick matrix highlights (PR42HS40-1204AF-02, fw 1.12, 8 µstep, SpreadCycle)
 
 | Current | Settles 720…6000? | Notes |
 |---------|-------------------|--------|
@@ -134,10 +134,11 @@ node.move_to(720.0, blocking=True)
 | Open-loop `move_to` | Trapezoid (FAS) | Step count only |
 | CL pre-1.1 | Pure PID chase | Overshoots at high vmax |
 | CL 1.1 | Braking-capped PID | No planned cruise |
-| **CL ≥1.2** | **Trap + v_ff + PID** | **Planned cruise + stop** |
+| CL 1.2 | Trap + v_ff + PID | Planned cruise + stop |
+| **CL ≥1.12** | **S-curve + Ka + PID** | **Planned cruise + stop** |
 
 Open-loop velocity never decelerates to a target. Closed-loop must. On long
-moves, 1.2 reaches ~0.8× the continuous open-loop ceiling — expected.
+moves, 1.12 reaches cruise if the distance is long enough — expected.
 
 ### Measure your motor
 

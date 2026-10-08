@@ -9,8 +9,8 @@ through the USB port of any board on the chain.
 
 ```
 ├── canstepper/                              # Python package (grafito-canstepper)
-├── firmware/GrafitoCANStepper_C3/           # node firmware (GCSP v1, fw 1.9)
-├── firmware/GrafitoCANStepper_C3_CANopen/   # optional CiA 301/402 SKU (fw 2.0)
+├── firmware/GrafitoCANStepper_C3/           # node firmware (GCSP v1, fw 1.12)
+├── firmware/GrafitoCANStepper_C3_CANopen/   # optional CiA 301/402 SKU (fw 2.1)
 ├── examples/                                # runnable examples + machine.toml
 ├── tests/                                   # pytest suite (runs on a software sim)
 ├── model_assets/                            # assembly render, PCB drawing, STEP CAD
@@ -80,10 +80,10 @@ node ID, enable the driver, jog, and check encoder / TMC / CAN telemetry.
   (single broadcast frame); e-stop is latched until re-enabled.
 - **Homing** — physical endstop on IO8, sensorless (StallGuard), or
   set-zero; configurable current, backoff and timeout.
-- **Closed loop** — firmware ≥1.2 plans a rest-to-rest **trapezoidal**
-  trajectory with **velocity feedforward** and a light tracking PID on the
-  MT6701 encoder (settle + stall watchdog). All motion limits are
-  *configurable defaults*, never hard clamps.
+- **Closed loop** — firmware ≥1.12 plans a rest-to-rest **S-curve**
+  trajectory with **velocity + acceleration feedforward** and a light
+  tracking PID on the MT6701 encoder (optional encoder LUT). All motion
+  limits are *configurable defaults*, never hard clamps.
 - **On-bus leader/follower** — dual-motor gantries stay coupled with no
   host in the loop (`DualMotorAxis`).
 - **Encoder-gated dual screws** — `IndependentDualAxis` commands both
@@ -146,10 +146,14 @@ PYTHONPATH=. python3 examples/belt_move_mm.py /dev/ttyACM0 1 50 77.2 150
 python3 -m pytest
 ```
 
-Current GCSP firmware is **1.9** (motors off at boot until `enable()`).
-Optional **CANopen 2.0** (EDS/DCF for PLC) lives in
-`firmware/GrafitoCANStepper_C3_CANopen/` — see
-**https://docs.grafito.in/docs/canopen**. Do not mix GCSP and CANopen on one bus.
+Current GCSP firmware is **1.12** (S-curve + Ka + LUT; motors off at boot
+until `enable()`). Optional **CANopen 2.1** lives in
+`firmware/GrafitoCANStepper_C3_CANopen/` with `GrafitoCANStepper.eds` and
+`GrafitoCANStepper_Node1.dcf` / `GrafitoCANStepper_Node2.dcf`
+(FileRevision 2, identity `0x00020100`). Discard any older 2.0 EDS — it
+will not import this board. Node 2 must be flashed with
+`-DCO_FACTORY_NODE_ID=2`. See **https://docs.grafito.in/docs/canopen**.
+Do not mix GCSP and CANopen on one bus.
 
 Firmware builds with Arduino IDE or `arduino-cli` (ESP32C3 Dev Module, USB
 CDC On Boot = Enabled; libraries: FastAccelStepper, TMC2209 janelia-arduino).

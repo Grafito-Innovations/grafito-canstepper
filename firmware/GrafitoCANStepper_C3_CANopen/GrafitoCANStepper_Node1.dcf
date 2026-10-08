@@ -1,18 +1,19 @@
 ; Grafito CANStepper C3 - CANopen Device Configuration File (CiA 306 DCF)
-; Instance of GrafitoCANStepper.eds for a commissioned node.
-; Import this in the PLC after the EDS (or instead, if the tool accepts DCF).
+; Firmware 2.1 instance of GrafitoCANStepper.eds for node 1.
+; Import the matching 2.1 EDS first (or this DCF if the tool accepts DCF).
+; Discard any older GrafitoCANStepper.eds / Node1.dcf (fw 2.0).
 
 [FileInfo]
 FileName=GrafitoCANStepper_Node1.dcf
 FileVersion=1
-FileRevision=0
+FileRevision=2
 EDSVersion=4.0
-Description=Grafito CANStepper C3 node 1 instance
+Description=Grafito CANStepper C3 node 1 instance, firmware 2.1
 CreationTime=12:00PM
 CreationDate=09-13-2026
 CreatedBy=Grafito Innovations
 ModificationTime=12:00PM
-ModificationDate=09-13-2026
+ModificationDate=10-08-2026
 ModifiedBy=Grafito Innovations
 LastEDS=GrafitoCANStepper.eds
 
@@ -21,7 +22,7 @@ VendorName=Grafito Innovations
 VendorNumber=0x000005A3
 ProductName=Grafito CANStepper C3
 ProductNumber=0x00004333
-RevisionNumber=0x00020000
+RevisionNumber=0x00020100
 OrderCode=GRAFITO-CANSTEPPER-C3
 BaudRate_10=0
 BaudRate_20=0
@@ -59,10 +60,13 @@ Dummy0006=1
 Dummy0007=1
 
 [Comments]
-Lines=3
-Line1=Units: position = MT6701 encoder counts (16384 / rev).
-Line2=Supported 402 modes: pp (1), pv (3), hm (6).
-Line3=ParameterValue is the commissioned instance; DefaultValue is the factory EDS default.
+Lines=6
+Line1=Firmware 2.1 DCF (FileRevision 2, identity 0x00020100). Discard older EDS/DCF packs - they will not match this board.
+Line2=Flash GrafitoCANStepper_C3_CANopen with -DCO_FACTORY_NODE_ID=1 so NMT heartbeat is 0x701. This file is only for node 1.
+Line3=Bus 1 Mbps. Apply Vin 5-24 V (typically 24 V). USB-C is data only.
+Line4=Units: MT6701 encoder counts (16384 / rev). Modes: pp=1, pv=3, hm=6.
+Line5=Commissioned 0x200C=0 so the first jog is not killed by HOME. Enable 6 -> 7 -> 15. Set 0x2006=1 if direction is reversed.
+Line6=ParameterValue is this node instance (including COB-IDs). DefaultValue is the factory EDS default ($NODEID placeholders).
 
 
 [MandatoryObjects]
@@ -108,7 +112,7 @@ SupportedObjects=33
 33=0x6502
 
 [ManufacturerObjects]
-SupportedObjects=26
+SupportedObjects=32
 1=0x2000
 2=0x2001
 3=0x2002
@@ -135,15 +139,21 @@ SupportedObjects=26
 24=0x2017
 25=0x2018
 26=0x2019
+27=0x201A
+28=0x201B
+29=0x201C
+30=0x201D
+31=0x201E
+32=0x201F
 
 [1000]
 ParameterName=Device Type
 ObjectType=0x7
 DataType=0x0007
 AccessType=ro
-DefaultValue=0x40192
+DefaultValue=0x00040192
 PDOMapping=0
-ParameterValue=0x40192
+ParameterValue=0x00040192
 
 [1001]
 ParameterName=Error Register
@@ -173,36 +183,36 @@ ParameterName=Vendor ID
 ObjectType=0x7
 DataType=0x0007
 AccessType=ro
-DefaultValue=0x5A3
+DefaultValue=0x000005A3
 PDOMapping=0
-ParameterValue=0x5A3
+ParameterValue=0x000005A3
 
 [1018sub2]
 ParameterName=Product Code
 ObjectType=0x7
 DataType=0x0007
 AccessType=ro
-DefaultValue=0x4333
+DefaultValue=0x00004333
 PDOMapping=0
-ParameterValue=0x4333
+ParameterValue=0x00004333
 
 [1018sub3]
 ParameterName=Revision Number
 ObjectType=0x7
 DataType=0x0007
 AccessType=ro
-DefaultValue=0x20000
+DefaultValue=0x00020100
 PDOMapping=0
-ParameterValue=0x20000
+ParameterValue=0x00020100
 
 [1018sub4]
 ParameterName=Serial Number
 ObjectType=0x7
 DataType=0x0007
 AccessType=ro
-DefaultValue=1
+DefaultValue=0x00000001
 PDOMapping=0
-ParameterValue=1
+ParameterValue=0x00000001
 
 [1005]
 ParameterName=COB-ID SYNC
@@ -236,16 +246,16 @@ ParameterName=Manufacturer Software Version
 ObjectType=0x7
 DataType=0x0009
 AccessType=ro
-DefaultValue=2.0.0
+DefaultValue=2.1.0
 PDOMapping=0
-ParameterValue=2.0.0
+ParameterValue=2.1.0
 
 [1014]
 ParameterName=COB-ID EMCY
 ObjectType=0x7
 DataType=0x0007
 AccessType=ro
-DefaultValue=0x81
+DefaultValue=$NODEID+0x80
 PDOMapping=0
 ParameterValue=0x81
 
@@ -279,7 +289,7 @@ ParameterName=COB-ID Client to Server
 ObjectType=0x7
 DataType=0x0007
 AccessType=ro
-DefaultValue=0x601
+DefaultValue=$NODEID+0x600
 PDOMapping=0
 ParameterValue=0x601
 
@@ -288,7 +298,7 @@ ParameterName=COB-ID Server to Client
 ObjectType=0x7
 DataType=0x0007
 AccessType=ro
-DefaultValue=0x581
+DefaultValue=$NODEID+0x580
 PDOMapping=0
 ParameterValue=0x581
 
@@ -311,7 +321,7 @@ ParameterName=RPDO1 COB-ID
 ObjectType=0x7
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x201
+DefaultValue=$NODEID+0x200
 PDOMapping=0
 ParameterValue=0x201
 
@@ -343,7 +353,7 @@ ParameterName=RPDO2 COB-ID
 ObjectType=0x7
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x301
+DefaultValue=$NODEID+0x300
 PDOMapping=0
 ParameterValue=0x301
 
@@ -439,7 +449,7 @@ ParameterName=TPDO1 COB-ID
 ObjectType=0x7
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x181
+DefaultValue=$NODEID+0x180
 PDOMapping=0
 ParameterValue=0x181
 
@@ -471,7 +481,7 @@ ParameterName=TPDO2 COB-ID
 ObjectType=0x7
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x281
+DefaultValue=$NODEID+0x280
 PDOMapping=0
 ParameterValue=0x281
 
@@ -644,9 +654,9 @@ ParameterName=Profile Acceleration
 ObjectType=0x7
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x20000
+DefaultValue=0x10000
 PDOMapping=0
-ParameterValue=0x20000
+ParameterValue=0x10000
 LowLimit=1
 
 [6084]
@@ -654,9 +664,9 @@ ParameterName=Profile Deceleration
 ObjectType=0x7
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x20000
+DefaultValue=0x10000
 PDOMapping=0
-ParameterValue=0x20000
+ParameterValue=0x10000
 LowLimit=1
 
 [6085]
@@ -868,7 +878,7 @@ DataType=0x0005
 AccessType=rw
 DefaultValue=1
 PDOMapping=0
-ParameterValue=1
+ParameterValue=0
 HighLimit=1
 
 [200D]
@@ -895,9 +905,9 @@ ParameterName=PID Kp
 ObjectType=0x7
 DataType=0x0008
 AccessType=rw
-DefaultValue=12.0
+DefaultValue=10.0
 PDOMapping=0
-ParameterValue=12.0
+ParameterValue=10.0
 
 [2010]
 ParameterName=PID Ki
@@ -913,9 +923,9 @@ ParameterName=PID Kd
 ObjectType=0x7
 DataType=0x0008
 AccessType=rw
-DefaultValue=0.1
+DefaultValue=0.35
 PDOMapping=0
-ParameterValue=0.1
+ParameterValue=0.35
 
 [2012]
 ParameterName=PID Tolerance Deg
@@ -962,9 +972,9 @@ ParameterName=Firmware Version
 ObjectType=0x7
 DataType=0x0006
 AccessType=ro
-DefaultValue=0x200
+DefaultValue=0x201
 PDOMapping=0
-ParameterValue=0x200
+ParameterValue=0x201
 
 [2017]
 ParameterName=Encoder OK
@@ -992,3 +1002,59 @@ AccessType=ro
 DefaultValue=24.0
 PDOMapping=0
 ParameterValue=24.0
+
+[201A]
+ParameterName=PID Ka
+ObjectType=0x7
+DataType=0x0008
+AccessType=rw
+DefaultValue=0.04
+PDOMapping=0
+ParameterValue=0.04
+
+[201B]
+ParameterName=Profile Jerk Deg/s3
+ObjectType=0x7
+DataType=0x0008
+AccessType=rw
+DefaultValue=0.0
+PDOMapping=0
+ParameterValue=0.0
+
+[201C]
+ParameterName=LUT Enable
+ObjectType=0x7
+DataType=0x0005
+AccessType=rw
+DefaultValue=0
+PDOMapping=0
+ParameterValue=0
+HighLimit=1
+
+[201D]
+ParameterName=LUT Command
+ObjectType=0x7
+DataType=0x0005
+AccessType=wo
+DefaultValue=0
+PDOMapping=0
+ParameterValue=0
+HighLimit=3
+
+[201E]
+ParameterName=LUT Valid
+ObjectType=0x7
+DataType=0x0005
+AccessType=ro
+DefaultValue=0
+PDOMapping=0
+ParameterValue=0
+
+[201F]
+ParameterName=LUT Peak INL Deg
+ObjectType=0x7
+DataType=0x0008
+AccessType=ro
+DefaultValue=0.0
+PDOMapping=0
+ParameterValue=0.0

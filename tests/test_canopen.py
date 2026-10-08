@@ -14,6 +14,7 @@ from canstepper.canopen402 import (
     ERR_ENCODER,
     EREG_GENERIC,
     EREG_PROFILE,
+    FILE_REVISION,
     HW_VERSION,
     NmtState,
     OD_ENTRIES,
@@ -95,7 +96,10 @@ def test_identity_sdo_matches_eds_constants():
     assert master.sdo_read(0x1009) == HW_VERSION
     assert master.sdo_read(0x100A) == SW_VERSION
     assert master.sdo_read(0x6502) == 0x00000025
-    assert master.sdo_read(0x2016) == 0x0200
+    assert master.sdo_read(0x2016) == 0x0201
+    assert master.sdo_read(0x201A) == pytest.approx(0.04)
+    assert master.sdo_read(0x201C) == 0
+    assert master.sdo_read(0x201E) == 0
 
 
 def test_sdo_unknown_object_aborts():
@@ -239,11 +243,16 @@ def test_eds_file_covers_object_dictionary():
     text = path.read_text(encoding="ascii")
     assert text == render_eds()
     sections = parse_eds(text)
+    assert sections["FileInfo"]["FileRevision"] == str(FILE_REVISION)
     assert sections["DeviceInfo"]["VendorNumber"].lower() == f"0x{VENDOR_ID:08x}"
+    assert sections["DeviceInfo"]["RevisionNumber"].lower() == f"0x{REVISION:08x}"
     assert sections["DeviceInfo"]["ProductName"] == "Grafito CANStepper C3"
     assert sections["DeviceInfo"]["BaudRate_1000"] == "1"
     assert int(sections["DeviceInfo"]["NrOfRXPDO"]) == 2
     assert int(sections["DeviceInfo"]["NrOfTXPDO"]) == 2
+    assert sections["1018sub3"]["DefaultValue"].lower() == f"0x{REVISION:08x}"
+    assert sections["1000"]["DefaultValue"].lower() == f"0x{DEVICE_TYPE:08x}"
+    assert sections["1400sub1"]["DefaultValue"] == "$NODEID+0x200"
     indexes = set(eds_object_indexes(sections))
     od_indexes = {entry.index for entry in OD_ENTRIES.values()}
     assert indexes == od_indexes
@@ -264,13 +273,31 @@ def test_dcf_and_object_dictionary_match_eds():
     dcf = parse_eds(dcf_path().read_text(encoding="ascii"))
     eds = parse_eds(eds_path().read_text(encoding="ascii"))
     assert dcf["FileInfo"]["LastEDS"] == "GrafitoCANStepper.eds"
+    assert dcf["FileInfo"]["FileRevision"] == str(FILE_REVISION)
     assert dcf["DeviceComissioning"]["NodeID"] == "1"
     assert dcf["DeviceComissioning"]["Baudrate"] == "1000"
     assert set(eds_object_indexes(dcf)) == set(eds_object_indexes(eds))
     assert dcf["1000"]["ParameterValue"] == eds["1000"]["DefaultValue"]
+    assert dcf["1018sub3"]["ParameterValue"].lower() == f"0x{REVISION:08x}"
     assert dcf["2000"]["ParameterValue"] == "1"
     assert dcf["1400sub1"]["ParameterValue"] == f"0x{cob_rpdo1(1):X}"
+    assert dcf["200C"]["ParameterValue"] == "0"
+    assert dcf["200C"]["DefaultValue"] == "1"
     assert "ParameterValue" not in eds["6040"]
+
+    node2 = parse_eds(dcf_path(2).read_text(encoding="ascii"))
+    assert paths["dcf_node2"] == dcf_path(2)
+    assert node2["DeviceComissioning"]["NodeID"] == "2"
+    assert node2["FileInfo"]["FileRevision"] == str(FILE_REVISION)
+    assert node2["2000"]["ParameterValue"] == "2"
+    assert node2["2000"]["DefaultValue"] == "1"
+    assert node2["1014"]["ParameterValue"] == f"0x{cob_emcy(2):X}"
+    assert node2["1200sub1"]["ParameterValue"] == f"0x{cob_rsdo(2):X}"
+    assert node2["1400sub1"]["ParameterValue"] == f"0x{cob_rpdo1(2):X}"
+    assert node2["1800sub1"]["ParameterValue"] == f"0x{cob_tpdo1(2):X}"
+    assert node2["1801sub1"]["ParameterValue"] == f"0x{cob_tpdo2(2):X}"
+    assert node2["200C"]["ParameterValue"] == "0"
+    assert node2["2016"]["ParameterValue"] == "0x201"
 
     node4 = parse_eds(render_dcf(node_id=4))
     assert node4["DeviceComissioning"]["NodeID"] == "4"
@@ -313,4 +340,6 @@ def test_firmware_stack_matches_python_identity():
     assert "0x00040192" in header
     assert 'CO_DEVICE_NAME[] = "CANStepper"' in header
     assert "static const uint8_t FW_MAJOR = 2" in sketch
+    assert "static const uint8_t FW_MINOR = 1" in sketch
+    assert "0x00020100UL" in header
     assert "CiA402" in sketch

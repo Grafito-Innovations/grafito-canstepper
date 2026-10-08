@@ -1,9 +1,9 @@
-# Closed-loop speed tuning (firmware ≥1.2)
+# Closed-loop speed tuning (firmware ≥1.11)
 
-This guide explains how closed-loop position moves work on Grafito CANStepper,
-why open-loop `run()` can still look “faster,” how to push closed-loop cruise
-toward the motor’s physical ceiling, and **all observations from hardware
-characterization** on a real NEMA 17 motor (model below).
+This guide explains how closed-loop position moves work on Grafito CANStepper
+(7-segment S-curve + acceleration feedforward + optional 200-step encoder LUT),
+why open-loop `run()` can still look “faster,” the physical RPM ceiling, and
+**measured settle / overshoot error** on a real NEMA 17 motor (model below).
 
 Related docs: [quickstart](quickstart.md) · [protocol](protocol.md) ·
 [Klipper kinematics (background)](https://www.klipper3d.org/Kinematics.html)
@@ -45,12 +45,12 @@ mechanism.
 | Item | Spec |
 |------|------|
 | Board | Grafito CANStepper (ESP32-C3 + TMC2209 + MT6701 + CAN) |
-| Firmware | **GCSP v1, fw 1.2** (trap trajectory + velocity feedforward) |
-| Encoder | MT6701 magnetic, 14-bit SSI |
+| Firmware | **GCSP v1, fw 1.11 / 1.12** (S-curve + Ka + 200-step LUT). fw 1.2 soak kept below as history. |
+| Encoder | MT6701 magnetic, 14-bit SSI + 200-step LUT (peak INL 2.12°) |
 | Driver | TMC2209 UART, SpreadCycle for high-speed tests |
 | Bus supply | **24.0 V** measured under load |
 | USB | CDC bridge on the same node under test |
-| Node | id **1**, `invert_dir=1` (required so +command increases encoder angle) |
+| Node | **3** (USB) for fw 1.11 error/RPM tables; older 1.2 soak was node 1 |
 
 ### What was tested
 
@@ -69,27 +69,28 @@ mechanism.
 |------|---------|----------|--------------------|
 | `run(v)` open-loop velocity | Accel ramp → constant speed | No | No — spins forever |
 | `move_to` open-loop | **Trapezoid** (FastAccelStepper) | No (step count) | Step target only |
-| `move_to` closed-loop **≥1.2** | **Planned trapezoid + velocity FF + tracking PID** | Yes | Yes → `MOVE_DONE` |
+| `move_to` closed-loop **≥1.11** | **7-segment S-curve + v_ff + Ka·a_ff + tracking PID** | Yes (+ LUT) | Yes → `MOVE_DONE` |
 | FOLLOW (encoder-corrected) | Continuous braking-law chase | Yes | Holds leader |
 
-There is **no S-curve (jerk-limited)** profile yet. Both open-loop position and
-closed-loop 1.2 use **constant acceleration** trapezoids (or a triangle when
-the move is too short to reach cruise).
+Open-loop position still uses FastAccelStepper’s **constant-acceleration**
+trapezoid. Closed-loop ≥1.11 is jerk-limited (S-curve). `cl_max_jerk = 0`
+means auto jerk `amax / 0.05 s`.
 
-### Closed-loop 1.2 control law
+### Closed-loop ≥1.11 control law
 
 On every `MOVE_ABS` / `MOVE_REL` with `closed_loop=1`:
 
 ```
-1. Plan rest-to-rest trap/triangle:
+1. Plan rest-to-rest 7-segment S-curve:
       vmax = min(max_speed, cl_max_speed)
       amax = cl_max_accel
+      jerk = cl_max_jerk or amax/0.05
       from encoder angle → target
 
 2. Each 5 ms (200 Hz):
-      r(t), v_ff(t)  = evaluate trapezoid
-      e_track       = r(t) − encoder
-      v_cmd         = v_ff + Kp·e_track + Ki·∫e_track − Kd·v_meas
+      r(t), v_ff(t), a_ff(t)  = evaluate S-curve
+      e_track                 = r(t) − encoder (LUT-corrected)
+      v_cmd                   = v_ff + Ka·a_ff + Kp·e_track + Ki·∫ − Kd·v_meas
 
 3. Settle when:
       plan finished AND |target − encoder| ≤ pid_tolerance
@@ -130,32 +131,38 @@ before the target; the PID only trims lag/load.
 | Open-loop continuous velocity | No | No |
 | Closed-loop position | Yes | Yes |
 
-On long moves, closed-loop 1.2 still reaches ~0.8× the continuous open-loop
-ceiling (e.g. CL 4800–6000 vs OL ~7200 deg/s on this motor) — expected.
+On this motor @ 24 V the **open-loop** ceiling is ~**3000 RPM**. Closed-loop
+precision work should stay at 120 RPM / 1440 deg/s²; pushing CL cruise toward
+the OL ceiling still has to decelerate and settle, and 100% current trips
+TMC **fault=4** (over-temperature).
 
 ---
 
 ## 2. Parameters that matter
 
-| Param | Role in CL 1.2 | Production default (this motor) |
-|-------|----------------|----------------------------------|
-| `cl_max_speed` | Trap **cruise** vmax (deg/s) | **4800** (800 RPM) |
-| `cl_max_accel` | Trap accel/decel (deg/s²) | **19200** (≈ 4× cruise) |
+| Param | Role in CL ≥1.11 | Precision default (this motor, fw 1.12) |
+|-------|------------------|-----------------------------------------|
+| `cl_max_speed` | S-curve **cruise** vmax (deg/s) | **720** (120 RPM) |
+| `cl_max_accel` | S-curve peak accel (deg/s²) | **1440** |
+| `cl_max_jerk` | Jerk limit (deg/s³); 0 = auto | **0** |
+| `pid_ka` | Accel feedforward (seconds) | **0.04** |
 | `max_speed` / `acceleration` | Also used as plan caps / open-loop | Match CL values |
-| `pid_kp/ki/kd` | Tracking trim around `v_ff` | **12 / 0.3 / 0.10** |
+| `pid_kp/ki/kd` | Tracking trim around `v_ff + Ka·a_ff` | **10 / 0.3 / 0.35** |
 | `pid_tolerance` | Settle window (deg) | **0.35** |
-| `run_current` | % of driver max toward motor rating | **70%** continuous |
-| `microsteps` | Smoothness vs torque at speed | **8** |
+| `lut_enable` | Apply 200-step encoder LUT | **1** after calibration |
+| `run_current` | % of driver max | **40%** precision; **80%** OL speed tests |
+| `microsteps` | Smoothness vs torque at speed | **8** precision; **2** for ~3000 RPM OL |
 | `stealthchop` | 0 = SpreadCycle | **0** (required for high speed) |
-| `invert_dir` | +command must increase encoder | **1** on this wiring |
 
 One-shot setup:
 
 ```python
 node.set_direction(True)   # if closed loop previously ran away
+node.calibrate_encoder_lut()
 node.configure_closed_loop_speed(
-    4800.0,
-    run_current=70,
+    720.0,
+    accel_deg_s2=1440.0,
+    run_current=40,
     microsteps=8,
     stealthchop=False,
     persist=True,
@@ -172,16 +179,70 @@ Independent of firmware (see also [JLCMC stepper speed notes](https://jlcmc.com/
 2. **Current** — more torque; on this 1.2 A motor, TMC % is relative to driver max. Continuous 70% was more reliable than hammering 100% without cool-down.
 3. **Inductance & back-EMF** — this motor’s **3.2 mH** inductance is friendly to high speed; higher-L motors sag earlier.
 4. **Rotor inertia (54 g·cm²)** — sets acceleration authority with available torque.
-5. **Microstepping** — 8× is the usual high-speed sweet spot on this frame.
+5. **Microstepping** — 8× for precision; **2×** is the OL ~3000 RPM sweet spot (1× was less consistent above 2500 RPM).
 6. **Chopper mode** — **SpreadCycle** holds torque at speed; **StealthChop** is quiet but sags early.
 7. **Resonance** — mid-band can stall open-loop; closed-loop recovers better.
 8. **USB / CDC link** — aggressive 100% continuous motion once dropped CDC (`/dev/ttyACM0` vanished); treat as a system limit when USB data and high motor current share a node (logic is from Vin, not USB power).
 
-Practical ceiling observed on this motor @ 24 V: open-loop ~**1200 RPM**, closed-loop position cruise ~**1000 RPM** with settle.
+Practical ceiling observed on this motor @ 24 V (firmware velocity, 2 µsteps,
+80% current, SpreadCycle): open-loop **~3000 RPM** (100% of command).
+**3300 RPM** starts to sag (~93%). **3500–4000 RPM** loses steps.
+**5000 RPM is not reachable**. 100% current can match 3000 RPM briefly, then
+TMC **OT (`fault=4`)**. Closed-loop precision settle stays at 120 RPM / 1440
+accel; do not persist high-speed current/µstep into NVS for positioning work.
 
 ---
 
-## 4. Hardware matrix results
+## 3.1 Firmware 1.11 confirmation run (error results)
+
+**2026-10-08**, node 3 USB, fw **1.11**, Vin **24.0 V**, MCU **42 °C**, LUT
+valid (200 points, peak INL **2.116°**), LUT enabled. Precision NVS:
+`I=40%`, 8 µstep, SpreadCycle, `cl_max_speed=720`, `cl_max_accel=1440`,
+auto jerk, `Kp=10`, `Ki=0.3`, `Kd=0.35`, `Ka=0.04`, `tol=0.5°`.
+
+Hold at zero for 2 s: **0.000° peak-to-peak**.
+
+| Move (deg) | Overshoot (deg) | Settle error (deg) | \|err\| (deg) | Time (s) |
+|------------|-----------------|--------------------|---------------|----------|
+| +30 | 0.081 | +0.125 | **0.125** | 1.02 |
+| +45 | 0.044 | +0.176 | **0.176** | 1.02 |
+| +90 | 0.088 | +0.110 | **0.110** | 1.17 |
+| +180 | 0.000 | +0.132 | **0.132** | 1.32 |
+| −45 | 0.000 | +0.044 | **0.044** | 1.02 |
+| −90 | 0.000 | +0.088 | **0.088** | 1.17 |
+| +360 | 1.560 | +0.286 | **0.286** | 1.77 |
+| +720 | 0.066 | +0.066 | **0.066** | 2.08 |
+| +1080 | 0.132 | +0.198 | **0.198** | 2.53 |
+
+**Closed-loop summary (9/9 settled):** median \|err\| **0.125°**, max **0.286°**;
+median overshoot **0.066°**, max **1.560°** (one-rev). Earlier trap-only 180°
+moves overshot ~43°; S-curve + Ka + LUT brought 180° overshoot to **0.000°**.
+
+Open-loop `run()` firmware-velocity ladder (temporarily 2 µstep, 80% current;
+precision NVS restored afterward):
+
+| Command RPM | Firmware median RPM | Reach |
+|-------------|---------------------|-------|
+| 2000 | 2000 | 100% |
+| 2500 | 2494 | 100% |
+| **3000** | **2977** | **99%** |
+| 3300 | 3075 | 93% |
+| 3500 | 1321 | 38% |
+| 4000 | 1607 | 40% |
+| **5000** | **35** | **1% — not reachable** |
+
+Parameter scan notes (same motor): `Kp=10 / Kd=0.35 / Ka=0.04` is the
+reliable stop-on-target set. `Kp=12` / high accel (≥180000 deg/s²) and
+**100% current** trip **FAULT4 (OT)**. Softer `Kp=6` times out on long fast
+moves. [arabel1a/S-curve-stepdir](https://github.com/arabel1a/S-curve-stepdir)
+is a GPL AVR pulse-table profiler (`f_0` start speed, slowest accel that still
+guarantees a cruise band). We already do on-the-fly S-curve on ESP32-C3; `f_0`
+would help first-step pull-in, not the 5000 RPM back-EMF wall. Do not copy
+that repo into this tree.
+
+---
+
+## 4. Hardware matrix results (historical, fw 1.2 trap)
 
 **Conditions (default):** firmware 1.2, 24 V, PR42HS40-1204AF-02, node 1,
 `invert_dir=1`, SpreadCycle, tracking PID 12 / 0.3 / 0.10, tol=0.35°,
@@ -473,6 +534,9 @@ arduino-cli upload -p /dev/ttyACM0 --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc \
 | ≤1.0 | Pure PI/D velocity chase; default cl_max_speed 30 deg/s |
 | 1.1 | Braking-envelope cap on PI/D (no planned cruise) |
 | **1.2** | **Trapezoidal trajectory + velocity feedforward + tracking PID** |
+| **1.10** | **200-step MT6701 encoder LUT** (calibrate, persist, interpolate) |
+| **1.11** | **7-segment S-curve + acceleration feedforward (`pid_ka`)** |
+| **1.12** | Factory defaults from the 1.11 bench: accel 1440, Kp 10, Kd 0.35, Ka 0.04 |
 
 ---
 
@@ -480,10 +544,13 @@ arduino-cli upload -p /dev/ttyACM0 --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc \
 
 | Idea | Source | Status |
 |------|--------|--------|
-| S-curve / jerk limit | JLCMC, machine tools | Not yet — next planner upgrade |
+| S-curve / jerk limit | JLCMC, machine tools | **Done (fw 1.11)** |
+| Encoder LUT | MT6701 detent INL | **Done (fw 1.10)** |
+| Accel feedforward Ka | S-curve a_ff | **Done (fw 1.11)** |
+| Start speed `f_0` | arabel1a S-curve-stepdir | Not yet — optional pull-in, not a 5000 RPM fix |
 | Look-ahead / junction speed | Klipper | Host multi-move paths only (future) |
 | Minimum cruise ratio | Klipper short zigzags | Not yet |
 | Pressure advance | Klipper extruder | N/A for pure axes |
 
-For most single-axis and coordinated point-to-point machines, trap + v_ff is
-the right first industrial profile; add S-curve if frame resonance dominates.
+Precision work should ship the 1.12 defaults (S-curve + Ka + LUT). Raise
+current/µsteps only for short open-loop speed tests, then restore.

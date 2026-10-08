@@ -151,3 +151,20 @@ def test_follower_invert_and_ratio(bus):
 def test_follow_self_rejected(bus):
     with pytest.raises(ValueError):
         bus.node(1).follow(bus.node(1))
+
+
+def test_encoder_lut_calibrate_enable_clear(bus):
+    node = bus.node(3)
+    st = node.get_lut_status()
+    assert not st.valid and not st.enabled
+    node.calibrate_encoder_lut(timeout=1.0)
+    st = node.get_lut_status()
+    assert st.valid and st.enabled and st.points == 200
+    assert node.get_param(Param.LUT_ENABLE) == 1
+    node.set_lut_enabled(False)
+    assert node.get_lut_status().enabled is False
+    node.set_lut_enabled(True)
+    assert node.get_lut_status().enabled is True
+    node.clear_encoder_lut()
+    st = node.get_lut_status()
+    assert not st.valid and not st.enabled

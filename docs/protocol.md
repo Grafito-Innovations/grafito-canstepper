@@ -60,7 +60,7 @@ Example — command node 1 to 180°: `44 0 0000000000C06640`
 | 1 | `ESTOP` | — | Instant stop + driver hardware-disable. **Latched**: motion commands are ignored until `ENABLE 1`. |
 | 2 | `STOP` | — | Decelerating stop; driver stays energized; cancels homing/velocity/position. |
 | 3 | `ENABLE` | `u8` 0/1 | Driver off/on. Enabling clears the e-stop latch. Disabling force-stops. |
-| 4 | `MOVE_ABS` | `f64` deg | Absolute position move. Open-loop: FAS trapezoid to step target. Closed-loop (fw ≥1.2): rest-to-rest trap plan + velocity FF + tracking PID to encoder. |
+| 4 | `MOVE_ABS` | `f64` deg | Absolute position move. Open-loop: FAS trapezoid to step target. Closed-loop (fw ≥1.11): rest-to-rest S-curve + velocity/accel FF + tracking PID to encoder. |
 | 5 | `MOVE_REL` | `f64` deg | Relative to the active target (or current position if idle). Same open/closed profiles as `MOVE_ABS`. |
 | 6 | `MOVE_VEL` | `f32` deg/s | Signed continuous velocity; 0 = ramped stop. |
 | 7 | `SET_ZERO` | — | Stop; current shaft angle becomes 0°. |
@@ -72,7 +72,8 @@ Example — command node 1 to 180°: `44 0 0000000000C06640`
 | 13 | `FOLLOW` | `u8` en, `u8` leader, `u8` flags, `u8` rsvd, `f32` ratio | flags bit0 = invert, bit1 = encoder-corrected. |
 | 14 | `FOLLOW_SYNC` | — | Recapture leader/local zero offset on the next leader frame. |
 | 15 | `SET_POSITION` | `f64` deg | Stop and label the current physical shaft position with this logical angle; no motion. |
-| 16–31 | reserved | | Ignored. |
+| 16 | `LUT` | `u8` action | Encoder LUT (fw ≥1.10): 0 = 200-step bidir calibration, 1 = enable, 2 = disable, 3 = clear. Calibration emits `LUT_DONE` / `LUT_FAILED`. |
+| 17–31 | reserved | | Ignored. |
 
 ### Homing (`HOME`)
 
@@ -115,12 +116,12 @@ never firmware clamps**. Persisted only on `SAVE_CONFIG`; loaded at power-on.
 | 7 | `invert_dir` | u32 | 0 | 0/1 | Invert physical rotation (logical frame preserved) |
 | 8 | `closed_loop` | u32 | 1 | 0/1 | MT6701 position loop for MOVE_ABS/REL |
 | 9 | `max_speed` | f32 | 720 | >0 | Cruise speed for open-loop position / host planning, deg/s |
-| 10 | `acceleration` | f32 | 2880 | >0 | Open-loop position ramp, deg/s² |
-| 11 | `cl_max_speed` | f32 | 720 | >0 | Closed-loop **trapezoid cruise** vmax, deg/s (fw ≥1.2) |
-| 12 | `cl_max_accel` | f32 | 2880 | >0 | Closed-loop **trapezoid accel/decel** amax, deg/s² |
-| 13 | `pid_kp` | f32 | 12.0 | ≥0 | Tracking Kp on (r − encoder); v_ff carries the move |
+| 10 | `acceleration` | f32 | 1440 | >0 | Open-loop position ramp, deg/s² |
+| 11 | `cl_max_speed` | f32 | 720 | >0 | Closed-loop **S-curve cruise** vmax, deg/s (fw ≥1.11) |
+| 12 | `cl_max_accel` | f32 | 1440 | >0 | Closed-loop **S-curve peak accel** amax, deg/s² |
+| 13 | `pid_kp` | f32 | 10.0 | ≥0 | Tracking Kp on (r − encoder); v_ff + Ka·a_ff carry the move |
 | 14 | `pid_ki` | f32 | 0.3 | ≥0 | Tracking Ki |
-| 15 | `pid_kd` | f32 | 0.10 | ≥0 | D-on-measured-velocity damping |
+| 15 | `pid_kd` | f32 | 0.35 | ≥0 | D-on-measured-velocity damping |
 | 16 | `pid_tolerance` | f32 | 0.35 | 0.001–360 | Settle window, deg |
 | 17 | `fast_rate_hz` | u32 | 10 | 0–500 | POSITION/MOTION/PID_STATUS rate |
 | 18 | `slow_rate_hz` | u32 | 1 | 0–500 | STATUS/DRIVER/ENV/… rate |
@@ -134,6 +135,9 @@ never firmware clamps**. Persisted only on `SAVE_CONFIG`; loaded at power-on.
 | 26 | `homing_backoff` | f32 | 2.0 | ≥0 | deg |
 | 27 | `homing_timeout_ms` | u32 | 30000 | 100–600000 | |
 | 28 | `stealthchop` | u32 | 1 | 0/1 | Quiet mode (off = SpreadCycle) |
+| 29 | `lut_enable` | u32 | 0 | 0/1 | Apply 200-step MT6701 LUT (fw ≥1.10; rejected if no table) |
+| 30 | `cl_max_jerk` | f32 | 0 | ≥0 | S-curve jerk limit, deg/s³ (fw ≥1.11). 0 = auto (`amax/0.05`) |
+| 31 | `pid_ka` | f32 | 0.04 | 0–1 | Acceleration feedforward, seconds: `v += Ka·a_ff` (fw ≥1.11; 0.04 from bench) |
 
 ## Telemetry (msg_id 32–63)
 
@@ -151,7 +155,8 @@ never firmware clamps**. Persisted only on `SAVE_CONFIG`; loaded at power-on.
 | 41 | `CAN_HEALTH` | `u8` TWAI state, `u8` tx_err, `u8` rx_err, `u8` recoveries, `u16` tx_failed, `u16` bus_errors | slow rate, RTR |
 | 42 | `ENC_COUNTS` | `i64` multi-turn counts (16384/rev) | RTR |
 | 43 | `PID_STATUS` | `u8` state (0 idle, 1 running, 2 settled, 3 fault), `u8` fault, `f32` output deg/s | fast rate (closed loop), RTR |
-| 44–63 | reserved | | |
+| 44 | `LUT_STATUS` | `u8` valid, `u8` enabled, `u16` n, `f32` peak INL deg | RTR (fw ≥1.10) |
+| 45–63 | reserved | | |
 
 ### STATUS flag bits (byte 0)
 
@@ -167,13 +172,16 @@ never firmware clamps**. Persisted only on `SAVE_CONFIG`; loaded at power-on.
 
 ### Modes / faults / events
 
-- **mode**: 0 idle, 1 position, 2 velocity, 3 homing, 4 following.
+- **mode**: 0 idle, 1 position, 2 velocity, 3 homing, 4 following,
+  5 encoder LUT calibration.
 - **fault**: 0 none, 1 encoder invalid, 2 no progress (mechanical stall in
   closed loop), 3 homing timeout, 4 TMC over-temperature shutdown (OT),
   5 TMC short (S2G / low-side).
 - **event**: 1 boot, 2 endstop hit, 3 endstop released, 4 stall, 5 homing
-  done, 6 homing failed, 7 move done, 8 e-stop, 9 fault. `data` is usually
-  the position (deg) at the event (OT fault may carry MCU temp °C).
+  done, 6 homing failed, 7 move done, 8 e-stop, 9 fault, 10 LUT done
+  (`data` = peak INL deg), 11 LUT failed (`detail`: 1 not ready/estop,
+  2 encoder, 3 table invalid, 4 busy). `data` is usually the position
+  (deg) at the event (OT fault may carry MCU temp °C).
 
 ### DRIVER payload (msg_id 37, firmware ≥1.4)
 
@@ -204,26 +212,29 @@ Public download + full-source preview (no private monorepo required):
 https://docs.grafito.in/docs/firmware  
 and raw file https://docs.grafito.in/firmware/GrafitoCANStepper_C3.ino
 
-## Closed-loop motion profile (firmware ≥1.2)
+## Closed-loop motion profile (firmware ≥1.11)
 
 When `closed_loop = 1` and the node receives `MOVE_ABS` / `MOVE_REL`:
 
-1. **Plan** a rest-to-rest trapezoid (or triangle if the distance is short)
-   from the current encoder angle to the target, using
-   `vmax = min(max_speed, cl_max_speed)` and `amax = cl_max_accel`.
-2. **Generate** each 5 ms control tick a reference position `r(t)` and
-   feedforward velocity `v_ff(t)` along that plan.
-3. **Track** with a light PID on the residual:  
-   `v_cmd = v_ff + Kp·(r − encoder) + Ki·∫ − Kd·v_meas`.
+1. **Plan** a rest-to-rest 7-segment S-curve from the current encoder angle
+   to the target, using `vmax = min(max_speed, cl_max_speed)`,
+   `amax = cl_max_accel`, and `jerk = cl_max_jerk` (0 = auto `amax/0.05 s`).
+2. **Generate** each 5 ms control tick a reference `r(t)`, velocity
+   feedforward `v_ff(t)`, and acceleration feedforward `a_ff(t)`.
+3. **Track** with acceleration FF plus a light PID on the residual:  
+   `v_cmd = v_ff + Ka·a_ff + Kp·(r − encoder) + Ki·∫ − Kd·v_meas`.
 4. **Settle** when the plan is finished, `|target − encoder| ≤ pid_tolerance`,
    and measured speed is low → emit `MOVE_DONE` (`EVT` 7).
+
+Optional 200-step MT6701 LUT (`lut_enable`, fw ≥1.10) linearizes magnetic
+detent INL before the PID sees the encoder.
 
 Open-loop position moves still use FastAccelStepper’s internal trapezoid
 via step counts (no encoder in the loop). Continuous `MOVE_VEL` is open-loop
 velocity with an accel ramp only.
 
 FOLLOW mode with encoder correction uses a continuous braking-law chase
-toward the live leader target (not a re-planned trap each frame).
+toward the live leader target (not a re-planned S-curve each frame).
 
 Tuning guide, hardware matrix (current / microsteps / chopper mode), and
 production recommendations: **[closed_loop_tuning.md](closed_loop_tuning.md)**.

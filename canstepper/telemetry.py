@@ -69,7 +69,7 @@ class NodeStatus:
             endstop_active=bool(flags & FLAG_ENDSTOP),
             stall_latched=bool(flags & FLAG_STALLED),
             encoder_ok=bool(flags & FLAG_ENCODER_OK),
-            mode=Mode(data[1]) if data[1] <= 4 else Mode.IDLE,
+            mode=Mode(data[1]) if data[1] in Mode._value2member_map_ else Mode.IDLE,
             fault=Fault(data[2]) if data[2] in Fault._value2member_map_ else Fault.NONE,
             fw_major=data[3],
             fw_minor=data[4],
@@ -237,6 +237,27 @@ class FollowStatus:
 
 
 @dataclass
+class LutStatus:
+    """Decoded Tel.LUT_STATUS (fw ≥1.10)."""
+
+    valid: bool = False
+    enabled: bool = False
+    points: int = 0
+    peak_inl_deg: float = 0.0
+
+    @staticmethod
+    def decode(data: bytes) -> "LutStatus":
+        if len(data) < 8:
+            raise ValueError(f"LUT_STATUS payload too short ({len(data)} bytes)")
+        return LutStatus(
+            valid=bool(data[0]),
+            enabled=bool(data[1]),
+            points=struct.unpack_from("<H", data, 2)[0],
+            peak_inl_deg=struct.unpack_from("<f", data, 4)[0],
+        )
+
+
+@dataclass
 class CanHealth:
     """Decoded Tel.CAN_HEALTH."""
 
@@ -282,6 +303,7 @@ class NodeState:
     bus_voltage: Optional[float] = None
     stallguard: Optional[int] = None
     driver: Optional["DriverStatus"] = None
+    lut: Optional["LutStatus"] = None
     last_seen: float = 0.0
     _stamps: dict = field(default_factory=dict, repr=False)
 
@@ -326,5 +348,8 @@ class NodeState:
                 self.driver = DriverStatus.decode(data)
                 self.stallguard = self.driver.stallguard
                 self._stamps["driver"] = now
+            elif msg == Tel.LUT_STATUS and len(data) >= 8:
+                self.lut = LutStatus.decode(data)
+                self._stamps["lut"] = now
         except (struct.error, ValueError):
             pass

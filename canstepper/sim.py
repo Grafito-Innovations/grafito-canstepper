@@ -78,6 +78,9 @@ class SimNode:
         self.follow_synced = False
         self._follow_leader_ref = 0.0
         self._follow_local_ref = 0.0
+        self.lut_valid = False
+        self.lut_enabled = False
+        self.lut_peak_inl_deg = 0.0
 
     # -- identity ---------------------------------------------------------------
 
@@ -156,6 +159,17 @@ class SimNode:
         elif msg_id == Tel.PID_STATUS:
             state = 2 if self.mode == Mode.POSITION else 0
             self._emit(Tel.PID_STATUS, struct.pack("<BBf", state, int(self.fault), 0.0))
+        elif msg_id == Tel.LUT_STATUS:
+            self._emit(
+                Tel.LUT_STATUS,
+                struct.pack(
+                    "<BBHf",
+                    1 if self.lut_valid else 0,
+                    1 if self.lut_enabled else 0,
+                    200 if self.lut_valid else 0,
+                    float(self.lut_peak_inl_deg),
+                ),
+            )
 
     def _follow_payload(self) -> bytes:
         flags = (1 if self.follow_invert else 0) | (2 if self.follow_enc_corrected else 0)
@@ -228,10 +242,15 @@ class SimNode:
             self.params = _default_params()
             self.params[int(Param.NODE_ID)] = keep
             self.nvs = dict(self.params)
+            self.lut_valid = False
+            self.lut_enabled = False
+            self.lut_peak_inl_deg = 0.0
         elif msg_id == Cmd.FOLLOW and len(d) >= 8:
             self._follow_config(d)
         elif msg_id == Cmd.FOLLOW_SYNC:
             self.follow_synced = False
+        elif msg_id == Cmd.LUT and len(d) >= 1:
+            self._lut(d[0])
 
     def _move(self, target: float) -> None:
         if not self.enabled or self.estopped:
@@ -286,6 +305,30 @@ class SimNode:
         value = self.params[pid]
         raw = struct.pack("<f", float(value)) if pdef.is_float else struct.pack("<I", int(value))
         self._emit(Tel.PARAM, bytes([pid, int(ParamStatus.OK)]) + raw)
+
+    def _lut(self, action: int) -> None:
+        if not self.enabled or self.estopped:
+            if action == 0:
+                self._event(Event.LUT_FAILED, 1, 0.0)
+            return
+        if action == 0:
+            self.lut_valid = True
+            self.lut_enabled = True
+            self.lut_peak_inl_deg = 0.0
+            self.params[int(Param.LUT_ENABLE)] = 1
+            self._event(Event.LUT_DONE, 0, 0.0)
+        elif action == 1:
+            if self.lut_valid:
+                self.lut_enabled = True
+                self.params[int(Param.LUT_ENABLE)] = 1
+        elif action == 2:
+            self.lut_enabled = False
+            self.params[int(Param.LUT_ENABLE)] = 0
+        elif action == 3:
+            self.lut_valid = False
+            self.lut_enabled = False
+            self.lut_peak_inl_deg = 0.0
+            self.params[int(Param.LUT_ENABLE)] = 0
 
     def _follow_config(self, d: bytes) -> None:
         enable = d[0] != 0

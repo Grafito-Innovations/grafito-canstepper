@@ -21,6 +21,7 @@ from .protocol import (
     EndstopAction,
     Event,
     HomeMethod,
+    LutAction,
     Param,
     ParamStatus,
     StandstillMode,
@@ -33,6 +34,7 @@ from .telemetry import (
     CanHealth,
     DriverStatus,
     FollowStatus,
+    LutStatus,
     NodeState,
     NodeStatus,
     PidStatus,
@@ -304,6 +306,65 @@ class StepperNode:
         self._cmd(Cmd.LOAD_DEFAULTS)
         return self
 
+    def calibrate_encoder_lut(
+        self,
+        blocking: bool = True,
+        timeout: float = 90.0,
+    ) -> "StepperNode":
+        """Run the firmware 200-step MT6701 LUT calibration (fw ≥1.10).
+
+        Energizes every full-step detent forward and reverse, averages out
+        hysteresis, stores the table in NVS, and enables interpolation so
+        closed-loop PID sees a linearized encoder. The shaft turns one
+        revolution each way. Requires the driver enabled and Vin applied.
+        """
+        self._guard_estop()
+        payload = bytes([int(LutAction.CALIBRATE)])
+        if not blocking:
+            self._cmd(Cmd.LUT, payload)
+            return self
+        with self._bus.arm_events(
+            self.node_id,
+            [Event.LUT_DONE, Event.LUT_FAILED, Event.FAULT, Event.ESTOP],
+        ) as waiter:
+            self._cmd(Cmd.LUT, payload)
+            hit = waiter.wait(timeout)
+        if hit is None:
+            raise RequestTimeout(self.node_id, "encoder LUT calibration", timeout)
+        event, detail, data = hit
+        if event == Event.LUT_FAILED:
+            why = {
+                1: "driver not enabled, e-stop, or missing stepper",
+                2: "encoder sample failed",
+                3: "detent spacing invalid (shaft not stepping — check Vin and motor)",
+                4: "calibration already running",
+            }.get(int(detail), f"reason {detail}")
+            raise NodeFault(
+                self.node_id,
+                int(detail),
+                f"node {self.node_id}: LUT calibration failed: {why}",
+            )
+        if event == Event.FAULT:
+            raise NodeFault(self.node_id, detail)
+        if event == Event.ESTOP:
+            raise EStopActive(f"node {self.node_id} e-stopped during LUT calibration")
+        return self
+
+    def set_lut_enabled(self, enabled: bool) -> "StepperNode":
+        """Apply or bypass a previously captured encoder LUT."""
+        action = LutAction.ENABLE if enabled else LutAction.DISABLE
+        self._cmd(Cmd.LUT, bytes([int(action)]))
+        return self
+
+    def clear_encoder_lut(self) -> "StepperNode":
+        """Erase the stored encoder LUT and disable interpolation."""
+        self._cmd(Cmd.LUT, bytes([int(LutAction.CLEAR)]))
+        return self
+
+    def get_lut_status(self, timeout: Optional[float] = None) -> LutStatus:
+        """Read whether a 200-step encoder LUT is valid and enabled."""
+        return LutStatus.decode(self._req(Tel.LUT_STATUS, timeout))
+
     # -- named convenience setters ---------------------------------------------------
 
     def set_node_id(self, new_id: int, save: bool = True) -> "StepperNode":
@@ -359,18 +420,19 @@ class StepperNode:
         return self.set_param(Param.ACCELERATION, deg_per_sec2)
 
     def set_cl_max_speed(self, deg_per_sec: float) -> "StepperNode":
-        """Closed-loop trapezoid cruise speed for MOVE_ABS/REL (``CL_MAX_SPEED``).
+        """Closed-loop S-curve cruise speed for MOVE_ABS/REL (``CL_MAX_SPEED``).
 
-        Firmware ≥1.2 plans a rest-to-rest trapezoidal trajectory
-        (accel → cruise at this speed → decel) and tracks it with velocity
-        feedforward + a light PID. Keep :meth:`set_max_speed` ≥ this value.
+        Firmware ≥1.11 plans a rest-to-rest 7-segment S-curve
+        (accel → cruise at this speed → decel, jerk-limited) and tracks it
+        with velocity + acceleration feedforward and a light PID. Keep
+        :meth:`set_max_speed` ≥ this value.
         See :meth:`configure_closed_loop_speed` for a one-shot setup.
         """
         return self.set_param(Param.CL_MAX_SPEED, deg_per_sec)
 
     def set_cl_max_accel(self, deg_per_sec2: float) -> "StepperNode":
-        """Trapezoid accel/decel for closed-loop position moves
-        (``CL_MAX_ACCEL``, default 2880 deg/s²)."""
+        """S-curve peak accel for closed-loop position moves
+        (``CL_MAX_ACCEL``, default 1440 deg/s² on fw ≥1.12)."""
         return self.set_param(Param.CL_MAX_ACCEL, deg_per_sec2)
 
     def configure_closed_loop_speed(
@@ -382,30 +444,31 @@ class StepperNode:
         run_current: Optional[int] = None,
         microsteps: Optional[int] = None,
         stealthchop: bool = False,
-        kp: float = 12.0,
+        kp: float = 10.0,
         ki: float = 0.3,
-        kd: float = 0.10,
+        kd: float = 0.35,
+        ka: float = 0.04,
         tolerance_deg: float = 0.35,
         persist: bool = False,
     ) -> "StepperNode":
-        """One-shot setup for high-speed closed-loop trapezoid moves.
+        """One-shot setup for closed-loop S-curve position moves.
 
-        Firmware ≥1.2 uses a planned trapezoidal profile with velocity
-        feedforward (``v = v_ff + PID(r − encoder)``). This helper sets the
-        trap ceilings (``cl_max_speed`` / ``cl_max_accel`` and matching
-        ``max_speed`` / ``acceleration``), enables the encoder loop, loads
-        tracking PID gains, and optionally raises run current / drops
-        microsteps / forces SpreadCycle for more torque at speed.
+        Firmware ≥1.11 uses a planned 7-segment S-curve with velocity and
+        acceleration feedforward (``v = v_ff + Ka·a_ff + PID(r − encoder)``).
+        This helper sets the cruise/accel ceilings (``cl_max_speed`` /
+        ``cl_max_accel`` and matching ``max_speed`` / ``acceleration``),
+        enables the encoder loop, loads tracking PID + ``Ka``, and optionally
+        raises run current / drops microsteps / forces SpreadCycle.
 
         Parameters
         ----------
         cruise_deg_s:
-            Trap cruise speed in deg/s (÷6 for RPM). Physical ceiling is set
-            by supply voltage, current, and microstepping. Use
+            S-curve cruise speed in deg/s (÷6 for RPM). Physical ceiling is
+            set by supply voltage, current, and microstepping. Use
             ``examples/closed_loop_speed.py`` or ``tools/cl_speed_validate.py``
             to find your motor's limit.
         accel_deg_s2:
-            Trap accel/decel; default is ``cruise_deg_s * accel_factor``.
+            S-curve peak accel; default is ``cruise_deg_s * accel_factor``.
         run_current, microsteps, stealthchop:
             Optional driver prep. ``stealthchop=False`` (SpreadCycle) is
             recommended above ~180 deg/s.
@@ -426,7 +489,7 @@ class StepperNode:
          .set_cl_max_accel(accel)
          .set_max_speed(cruise)
          .set_acceleration(accel)
-         .set_pid(kp, ki, kd, tolerance_deg=tolerance_deg))
+         .set_pid(kp, ki, kd, tolerance_deg=tolerance_deg, ka=ka))
         if persist:
             self.save_config()
         return self
@@ -446,10 +509,10 @@ class StepperNode:
         max_speed: Optional[float] = None,
         max_accel: Optional[float] = None,
     ) -> "StepperNode":
-        """Toggle the encoder position loop; optionally set its trap
+        """Toggle the encoder position loop; optionally set S-curve
         cruise/accel (see :meth:`set_cl_max_speed` / :meth:`set_cl_max_accel`,
         or :meth:`configure_closed_loop_speed`). Defaults are 720 deg/s /
-        2880 deg/s² on firmware ≥1.2 — configurable, not hard clamps."""
+        1440 deg/s² on firmware ≥1.12 — configurable, not hard clamps."""
         self.set_param(Param.CLOSED_LOOP, 1 if enabled else 0)
         if max_speed is not None:
             self.set_param(Param.CL_MAX_SPEED, max_speed)
@@ -463,15 +526,18 @@ class StepperNode:
         ki: float,
         kd: float,
         tolerance_deg: Optional[float] = None,
+        ka: Optional[float] = None,
     ) -> "StepperNode":
-        """Closed-loop tracking PID gains (trim around velocity feedforward).
+        """Closed-loop tracking PID gains (trim around S-curve feedforward).
 
-        On firmware ≥1.2 the move is driven by a trapezoidal ``v_ff``; these
+        On firmware ≥1.11 the move is driven by ``v_ff + Ka·a_ff``; these
         gains only correct residual tracking error (units: deg/s per deg).
         """
         self.set_param(Param.PID_KP, kp)
         self.set_param(Param.PID_KI, ki)
         self.set_param(Param.PID_KD, kd)
+        if ka is not None:
+            self.set_param(Param.PID_KA, ka)
         if tolerance_deg is not None:
             self.set_param(Param.PID_TOLERANCE, tolerance_deg)
         return self
