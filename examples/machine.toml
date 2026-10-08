@@ -1,0 +1,45 @@
+# Example machine configuration for canstepper.Machine.from_config().
+# Node tables accept any firmware parameter name (canstepper.protocol.PARAMS).
+
+[bus]
+transport = "serial"
+port = "/dev/ttyACM0"
+
+[node.z_left]
+id = 2
+run_current = 40
+hold_current = 15
+microsteps = 16
+closed_loop = 1
+
+[node.z_right]
+id = 3
+run_current = 40
+hold_current = 15
+microsteps = 16
+
+[node.feeder]
+id = 6
+run_current = 30
+max_speed = 1440.0
+
+[axis.z]
+type = "dual_motor"
+primary = "z_left"
+secondary = "z_right"
+invert_secondary = true
+rotation_distance = 8.0        # mm per motor revolution
+max_speed = 15.0               # mm/s (host-side policy)
+require_homing = true
+
+[axis.z.homing]
+method = "stallguard"
+direction = -1
+speed = 5.0
+current_percent = 25
+backoff = 2.0
+
+[axis.feed]
+type = "single"
+node = "feeder"
+rotation_distance = 30.0

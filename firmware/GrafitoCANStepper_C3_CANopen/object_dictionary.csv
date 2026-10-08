@@ -1,0 +1,87 @@
+index,subindex,name,data_type,access,pdo_mapping,default_text,minimum,maximum,group
+0x1000,0,Device Type,UNSIGNED32,ro,False,0x40192,,,mandatory
+0x1001,0,Error Register,UNSIGNED8,ro,False,0,,,mandatory
+0x1005,0,COB-ID SYNC,UNSIGNED32,rw,False,0x80,,,optional
+0x1008,0,Manufacturer Device Name,VISIBLE_STRING,ro,False,CANStepper,,,optional
+0x1009,0,Manufacturer Hardware Version,VISIBLE_STRING,ro,False,C3,,,optional
+0x100A,0,Manufacturer Software Version,VISIBLE_STRING,ro,False,2.0.0,,,optional
+0x1014,0,COB-ID EMCY,UNSIGNED32,ro,False,0x81,,,optional
+0x1017,0,Producer Heartbeat Time,UNSIGNED16,rw,False,0x3E8,0,65535,optional
+0x1018,0,Identity Number of Entries,UNSIGNED8,ro,False,4,,,mandatory
+0x1018,1,Vendor ID,UNSIGNED32,ro,False,0x5A3,,,mandatory
+0x1018,2,Product Code,UNSIGNED32,ro,False,0x4333,,,mandatory
+0x1018,3,Revision Number,UNSIGNED32,ro,False,0x20000,,,mandatory
+0x1018,4,Serial Number,UNSIGNED32,ro,False,1,,,mandatory
+0x1200,0,SDO Server Number of Entries,UNSIGNED8,ro,False,2,,,optional
+0x1200,1,COB-ID Client to Server,UNSIGNED32,ro,False,0x601,,,optional
+0x1200,2,COB-ID Server to Client,UNSIGNED32,ro,False,0x581,,,optional
+0x1400,0,RPDO1 Comm Number of Entries,UNSIGNED8,ro,False,2,,,optional
+0x1400,1,RPDO1 COB-ID,UNSIGNED32,rw,False,0x201,,,optional
+0x1400,2,RPDO1 Transmission Type,UNSIGNED8,rw,False,0xFF,,,optional
+0x1401,0,RPDO2 Comm Number of Entries,UNSIGNED8,ro,False,2,,,optional
+0x1401,1,RPDO2 COB-ID,UNSIGNED32,rw,False,0x301,,,optional
+0x1401,2,RPDO2 Transmission Type,UNSIGNED8,rw,False,0xFF,,,optional
+0x1600,0,RPDO1 Map Number of Entries,UNSIGNED8,ro,False,2,,,optional
+0x1600,1,RPDO1 Mapping 1,UNSIGNED32,ro,False,0x60400010,,,optional
+0x1600,2,RPDO1 Mapping 2,UNSIGNED32,ro,False,0x607A0020,,,optional
+0x1601,0,RPDO2 Map Number of Entries,UNSIGNED8,ro,False,2,,,optional
+0x1601,1,RPDO2 Mapping 1,UNSIGNED32,ro,False,0x60400010,,,optional
+0x1601,2,RPDO2 Mapping 2,UNSIGNED32,ro,False,0x60FF0020,,,optional
+0x1800,0,TPDO1 Comm Number of Entries,UNSIGNED8,ro,False,2,,,optional
+0x1800,1,TPDO1 COB-ID,UNSIGNED32,rw,False,0x181,,,optional
+0x1800,2,TPDO1 Transmission Type,UNSIGNED8,rw,False,0xFF,,,optional
+0x1801,0,TPDO2 Comm Number of Entries,UNSIGNED8,ro,False,2,,,optional
+0x1801,1,TPDO2 COB-ID,UNSIGNED32,rw,False,0x281,,,optional
+0x1801,2,TPDO2 Transmission Type,UNSIGNED8,rw,False,0xFF,,,optional
+0x1A00,0,TPDO1 Map Number of Entries,UNSIGNED8,ro,False,2,,,optional
+0x1A00,1,TPDO1 Mapping 1,UNSIGNED32,ro,False,0x60410010,,,optional
+0x1A00,2,TPDO1 Mapping 2,UNSIGNED32,ro,False,0x60640020,,,optional
+0x1A01,0,TPDO2 Map Number of Entries,UNSIGNED8,ro,False,2,,,optional
+0x1A01,1,TPDO2 Mapping 1,UNSIGNED32,ro,False,0x60410010,,,optional
+0x1A01,2,TPDO2 Mapping 2,UNSIGNED32,ro,False,0x606C0020,,,optional
+0x2000,0,Node ID,UNSIGNED8,rw,False,1,1,127,manufacturer
+0x2001,0,Steps Per Revolution,UNSIGNED32,rw,False,0xC8,1,100000,manufacturer
+0x2002,0,Microsteps,UNSIGNED32,rw,False,0x10,1,256,manufacturer
+0x2003,0,Run Current Percent,UNSIGNED8,rw,False,0x14,1,100,manufacturer
+0x2004,0,Hold Current Percent,UNSIGNED8,rw,False,5,0,100,manufacturer
+0x2005,0,Stall Threshold,UNSIGNED8,rw,False,0xA,,255,manufacturer
+0x2006,0,Invert Direction,UNSIGNED8,rw,False,0,,1,manufacturer
+0x2007,0,Closed Loop Enable,UNSIGNED8,rw,False,1,,1,manufacturer
+0x2008,0,Save Config,UNSIGNED8,wo,False,0,,,manufacturer
+0x2009,0,Load Defaults,UNSIGNED8,wo,False,0,,,manufacturer
+0x200A,0,StealthChop Enable,UNSIGNED8,rw,False,1,,1,manufacturer
+0x200B,0,Standstill Mode,UNSIGNED8,rw,False,1,,3,manufacturer
+0x200C,0,Endstop Enable,UNSIGNED8,rw,False,1,,1,manufacturer
+0x200D,0,Endstop Active High,UNSIGNED8,rw,False,1,,1,manufacturer
+0x200E,0,CAN Bitrate,UNSIGNED32,rw,False,0xF4240,,,manufacturer
+0x200F,0,PID Kp,REAL32,rw,False,12.0,,,manufacturer
+0x2010,0,PID Ki,REAL32,rw,False,0.3,,,manufacturer
+0x2011,0,PID Kd,REAL32,rw,False,0.1,,,manufacturer
+0x2012,0,PID Tolerance Deg,REAL32,rw,False,0.35,,,manufacturer
+0x2013,0,Enable On Boot,UNSIGNED8,rw,False,0,,1,manufacturer
+0x2014,0,Zero On Boot,UNSIGNED8,rw,False,0,,1,manufacturer
+0x2015,0,Homing Timeout ms,UNSIGNED32,rw,False,0x7530,100,600000,manufacturer
+0x2016,0,Firmware Version,UNSIGNED16,ro,False,0x200,,,manufacturer
+0x2017,0,Encoder OK,UNSIGNED8,ro,False,1,,,manufacturer
+0x2018,0,Endstop Active,UNSIGNED8,ro,False,0,,,manufacturer
+0x2019,0,Bus Voltage,REAL32,ro,False,24.0,,,manufacturer
+0x603F,0,Error Code,UNSIGNED16,ro,False,0,,,optional
+0x6040,0,Controlword,UNSIGNED16,rw,True,0,,,optional
+0x6041,0,Statusword,UNSIGNED16,ro,True,0x240,,,optional
+0x605A,0,Quick Stop Option Code,INTEGER16,rw,False,2,,,optional
+0x6060,0,Modes of Operation,INTEGER8,rw,True,1,,,optional
+0x6061,0,Modes of Operation Display,INTEGER8,ro,True,1,,,optional
+0x6064,0,Position Actual Value,INTEGER32,ro,True,0,,,optional
+0x606C,0,Velocity Actual Value,INTEGER32,ro,True,0,,,optional
+0x607A,0,Target Position,INTEGER32,rw,True,0,,,optional
+0x6081,0,Profile Velocity,UNSIGNED32,rw,False,0x8000,1,,optional
+0x6083,0,Profile Acceleration,UNSIGNED32,rw,False,0x20000,1,,optional
+0x6084,0,Profile Deceleration,UNSIGNED32,rw,False,0x20000,1,,optional
+0x6085,0,Quick Stop Deceleration,UNSIGNED32,rw,False,0x40000,1,,optional
+0x6098,0,Homing Method,INTEGER8,rw,False,0x23,,,optional
+0x6099,0,Homing Speeds Number of Entries,UNSIGNED8,ro,False,2,,,optional
+0x6099,1,Speed During Search for Switch,UNSIGNED32,rw,False,0x8E3,,,optional
+0x6099,2,Speed During Search for Zero,UNSIGNED32,rw,False,0x1C7,,,optional
+0x609A,0,Homing Acceleration,UNSIGNED32,rw,False,0x20000,1,,optional
+0x60FF,0,Target Velocity,INTEGER32,rw,True,0,,,optional
+0x6502,0,Supported Drive Modes,UNSIGNED32,ro,False,0x25,,,optional

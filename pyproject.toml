@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grafito-canstepper"
+version = "0.2.1"
+description = "Host library for Grafito CANStepper boards (GCSP v1): multi-node CAN, Axis mm units, Cartesian/CoreXY G-code, homing, TMC diagnostics"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Grafito Innovations", email = "grafito.innovations@gmail.com" }]
+keywords = ["stepper", "CAN", "motion-control", "esp32", "tmc2209", "encoder"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Manufacturing",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Hardware :: Hardware Drivers",
+]
+dependencies = ["pyserial>=3.4"]
+
+[project.optional-dependencies]
+toml = ["tomli>=2.0; python_version < '3.11'"]
+dev = ["pytest>=7", "ruff", "mypy", "tomli>=2.0; python_version < '3.11'"]
+
+[project.urls]
+Documentation = "https://docs.grafito.in"
+Homepage = "https://docs.grafito.in"
+"AI assistants" = "https://docs.grafito.in/docs/ai-assistants"
+"LLM index (llms.txt)" = "https://docs.grafito.in/llms.txt"
+Source = "https://github.com/Grafito-Innovations/grafito-canstepper"
+Issues = "https://github.com/Grafito-Innovations/grafito-canstepper/issues"
+
+[tool.setuptools.packages.find]
+include = ["canstepper*"]
+
+[tool.setuptools.package-data]
+canstepper = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"

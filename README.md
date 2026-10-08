@@ -1,0 +1,130 @@
+# Grafito CANStepper
+
+Closed-loop stepper motor control over CAN. Each board carries an ESP32-C3,
+a TMC2209 driver, an MT6701 14-bit magnetic encoder and a CAN transceiver;
+up to 31 boards daisy-chain on one 1 Mbps bus and are driven from Python
+through the USB port of any board on the chain.
+
+```
+├── canstepper/                              # Python package (grafito-canstepper)
+├── firmware/GrafitoCANStepper_C3/           # node firmware (GCSP v1, fw 1.9)
+├── firmware/GrafitoCANStepper_C3_CANopen/   # optional CiA 301/402 SKU (fw 2.0)
+├── examples/                                # runnable examples + machine.toml
+├── tests/                                   # pytest suite (runs on a software sim)
+├── model_assets/                            # assembly render, PCB drawing, STEP CAD
+└── docs/                                    # protocol, quickstart, CAD index
+```
+
+## Product links
+
+- **Shop / brochure:** [CANStepper Adapter Board](https://grafito.in/shop/products/canstepper-adapter-board/)
+- **Amazon (India):** https://www.amazon.in/dp/B0H8XZ6V99
+- **Docs:** https://docs.grafito.in
+- **Mechanical CAD & drawings:** https://docs.grafito.in/docs/mechanical-cad
+- **PyPI:** [grafito-canstepper](https://pypi.org/project/grafito-canstepper/)
+
+CAD files in this repo (`model_assets/`):
+
+| File | Description |
+| --- | --- |
+| `CANStepper_block_diagram.png` | System block diagram |
+| `CANStepper_V1_Assembly.png` | Assembly render |
+| `Drawing_CANStepper_V1.pdf` | PCB mechanical drawing |
+| `CANStepperV1_3D_PCB.step` | Full PCB STEP |
+| `CASING_MOUNT.step` | Casing / mount STEP |
+| `Heat_Spreader.step` | Heat spreader STEP |
+| `TMC2209 UART Stepper Driver - Heat_Sink.step` | TMC2209 heatsink STEP |
+
+## Highlights
+
+- **Layered Python API** — raw frames → `StepperNode` → `NodeGroup` →
+  `Axis` (mm units via `rotation_distance`) → `DualMotorAxis` /
+  `IndependentDualAxis` / `Cartesian` / `CoreXY` / `MotionGroup` →
+  declarative `machine.toml`.
+- **Safety scopes** — `node.estop()`, `group.estop()`, `bus.estop_all()`
+  (single broadcast frame); e-stop is latched until re-enabled.
+- **Homing** — physical endstop on IO8, sensorless (StallGuard), or
+  set-zero; configurable current, backoff and timeout.
+- **Closed loop** — firmware ≥1.2 plans a rest-to-rest **trapezoidal**
+  trajectory with **velocity feedforward** and a light tracking PID on the
+  MT6701 encoder (settle + stall watchdog). All motion limits are
+  *configurable defaults*, never hard clamps.
+- **On-bus leader/follower** — dual-motor gantries stay coupled with no
+  host in the loop (`DualMotorAxis`).
+- **Encoder-gated dual screws** — `IndependentDualAxis` commands both
+  motors independently and **blocks the next pass until both encoders**
+  are within mm tolerance of the target.
+- **Simulator included** — `canstepper.sim.SimNetwork` implements the whole
+  protocol in software; the test suite and the examples run without hardware.
+
+## Install & first spin
+
+```bash
+pip install grafito-canstepper
+
+# Development (from this directory):
+# pip install -U pip setuptools && pip install -e ".[dev]"
+```
+
+```python
+from canstepper import CANStepperBus
+
+with CANStepperBus.serial("/dev/ttyACM0") as bus:
+    print(bus.discover())
+    node = bus.node(1)
+    node.set_run_current(40).enable()
+    node.move_to(360.0, blocking=True)
+```
+
+Continue with:
+
+- [docs/quickstart.md](docs/quickstart.md) — first motion
+- [docs/closed_loop_tuning.md](docs/closed_loop_tuning.md) — trapezoid + v_ff
+- [docs/protocol.md](docs/protocol.md) — GCSP v1 wire protocol
+- [docs/mechanical_cad.md](docs/mechanical_cad.md) — CAD, drawings, assembly video
+
+G-code examples (from this directory):
+
+```bash
+PYTHONPATH=. python3 examples/gcode_cartesian.py /dev/ttyACM0 1 2
+PYTHONPATH=. python3 examples/gcode_corexy.py /dev/ttyACM0 1 2
+PYTHONPATH=. python3 examples/gcode_from_file.py examples/gcode/square.gcode
+```
+
+Homing examples (IO8 endstop, StallGuard sensorless, set-zero):
+
+```bash
+PYTHONPATH=. python3 examples/home_endstop.py /dev/ttyACM0 1 -1
+PYTHONPATH=. python3 examples/home_sensorless.py /dev/ttyACM0 1 -1 60
+PYTHONPATH=. python3 examples/home_set_zero.py /dev/ttyACM0 1
+```
+
+Belt axis (mm):
+
+```bash
+PYTHONPATH=. python3 examples/belt_move_mm.py /dev/ttyACM0 1 50 77.2 150
+```
+
+## Development
+
+```bash
+python3 -m pytest
+```
+
+Current GCSP firmware is **1.9** (motors off at boot until `enable()`).
+Optional **CANopen 2.0** (EDS/DCF for PLC) lives in
+`firmware/GrafitoCANStepper_C3_CANopen/` — see
+**https://docs.grafito.in/docs/canopen**. Do not mix GCSP and CANopen on one bus.
+
+Firmware builds with Arduino IDE or `arduino-cli` (ESP32C3 Dev Module, USB
+CDC On Boot = Enabled; libraries: FastAccelStepper, TMC2209 janelia-arduino).
+**Apply Vin (5–24 V, typically 24 V) before upload** — USB-C is data only and
+does not power the ESP32 for programming. CAN termination is **on by default**
+(0 Ω jumper); remove that 0 Ω on mid-chain daisy-chain nodes.
+
+```bash
+arduino-cli compile --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc \
+  firmware/GrafitoCANStepper_C3
+arduino-cli upload -p /dev/ttyACM0 --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc \
+  firmware/GrafitoCANStepper_C3
+```
