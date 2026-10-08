@@ -13,7 +13,7 @@ boards used three different connector types and are harder to cable.
 1. Apply main Vin (**5–24 V**, typically **24 V**). **USB does not power the
    ESP32 for programming** — Vin is required to flash; USB-C is data only.
 2. Flash `firmware/GrafitoCANStepper_C3` (ESP32-C3, **USB CDC On Boot: Enabled**)
-   with Vin connected.
+   with Vin connected. Full procedure: [flashing.md](flashing.md).
 3. Open a serial monitor once: you should see a boot banner like  
    `# GrafitoCANStepper fw 1.12 proto 1` and an MT6701 self-check line with a
    live angle.

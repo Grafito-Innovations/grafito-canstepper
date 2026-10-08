@@ -14,7 +14,7 @@ through the USB port of any board on the chain.
 ├── examples/                                # runnable examples + machine.toml
 ├── tests/                                   # pytest suite (runs on a software sim)
 ├── model_assets/                            # assembly render, PCB drawing, STEP CAD
-└── docs/                                    # protocol, quickstart, CAD index
+└── docs/                                    # flashing, protocol, quickstart, CAD
 ```
 
 ## Product links
@@ -113,6 +113,7 @@ with CANStepperBus.serial("/dev/ttyACM0") as bus:
 
 Continue with:
 
+- [docs/flashing.md](docs/flashing.md) — Arduino IDE + arduino-cli (GCSP and CANopen)
 - [docs/quickstart.md](docs/quickstart.md) — first motion
 - [docs/closed_loop_tuning.md](docs/closed_loop_tuning.md) — trapezoid + v_ff
 - [docs/protocol.md](docs/protocol.md) — GCSP v1 wire protocol
@@ -154,6 +155,9 @@ until `enable()`). Optional **CANopen 2.1** lives in
 will not import this board. Node 2 must be flashed with
 `-DCO_FACTORY_NODE_ID=2`. See **https://docs.grafito.in/docs/canopen**.
 Do not mix GCSP and CANopen on one bus.
+
+**How to flash (Arduino IDE + arduino-cli, GCSP and CANopen):**
+[docs/flashing.md](docs/flashing.md) · https://docs.grafito.in/docs/flashing
 
 Firmware builds with Arduino IDE or `arduino-cli` (ESP32C3 Dev Module, USB
 CDC On Boot = Enabled; libraries: FastAccelStepper, TMC2209 janelia-arduino).
