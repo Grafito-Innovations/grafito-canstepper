@@ -34,6 +34,7 @@ CAD and brochure files in this repo (`model_assets/`):
 | `CANStepper_pinout.png` | Connector / pinout diagram |
 | `CANStepper_multiaxis_can.png` | Multi-axis CAN bus demonstration |
 | `CANStepper_V1_assembly.mp4` | V1 board assembly video (historical) |
+| `CANStepper_V1_assembly_preview.jpg` | Preview frame for the V1 video |
 | `CANStepper_test_station.png` | Board Test Station (after USB connect) |
 | `CANStepper_block_diagram.png` | System block diagram |
 | `CANStepper_V2_Assembly.webp` | V2 assembly render |
@@ -44,11 +45,13 @@ CAD and brochure files in this repo (`model_assets/`):
 | `TMC2209 UART Stepper Driver - Heat_Sink.step` | TMC2209 heatsink STEP |
 | `canstepper-brochure-v2.pdf` | Product brochure |
 
-![CANStepper pinout](model_assets/CANStepper_pinout.png)
+<img src="model_assets/CANStepper_pinout.png" alt="CANStepper pinout" width="720" />
 
-![CAN bus multi-axis demonstration](model_assets/CANStepper_multiaxis_can.png)
+<img src="model_assets/CANStepper_multiaxis_can.png" alt="CAN bus multi-axis demonstration" width="900" />
 
-[V1 board assembly video](model_assets/CANStepper_V1_assembly.mp4)
+**V1 board assembly** (click the preview to play the video):
+
+[![V1 board assembly](model_assets/CANStepper_V1_assembly_preview.jpg)](model_assets/CANStepper_V1_assembly.mp4)
 
 This clip is **version 1** of the same board. V1 used **three different
 connector types**, which made cabling and crimping difficult. The current
@@ -63,7 +66,9 @@ After USB and Vin are connected, test the board in the
 **[CANStepper Test Station](https://docs.grafito.in/dashboard)** — set the
 node ID, enable the driver, jog, and check encoder / TMC / CAN telemetry.
 
-[![CANStepper Test Station](model_assets/CANStepper_test_station.png)](https://docs.grafito.in/dashboard)
+<a href="https://docs.grafito.in/dashboard">
+  <img src="model_assets/CANStepper_test_station.png" alt="CANStepper Test Station" width="900" />
+</a>
 
 ## Highlights
 

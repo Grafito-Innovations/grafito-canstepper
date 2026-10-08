@@ -24,7 +24,9 @@ boards used three different connector types and are harder to cable.
    **[CANStepper Test Station](https://docs.grafito.in/dashboard)** to set the
    node ID, enable the driver, jog, and confirm encoder / TMC / CAN telemetry.
 
-   ![CANStepper Test Station](../model_assets/CANStepper_test_station.png)
+   <a href="https://docs.grafito.in/dashboard">
+     <img src="../model_assets/CANStepper_test_station.png" alt="CANStepper Test Station" width="900" />
+   </a>
 6. Install the host library (PyPI: `grafito-canstepper`, import `canstepper`):
 
 ```bash
