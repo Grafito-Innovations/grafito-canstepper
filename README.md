@@ -43,7 +43,7 @@ CAD and brochure files in this repo (`model_assets/`):
 
 ![CANStepper pinout](model_assets/CANStepper_pinout.png)
 
-![CAN bus multi-axis demonstration](model_assets/CANStepper_multiaxis_can.png) |
+![CAN bus multi-axis demonstration](model_assets/CANStepper_multiaxis_can.png)
 
 ## Highlights
 
