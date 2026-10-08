@@ -50,7 +50,7 @@ mechanism.
 | Driver | TMC2209 UART, SpreadCycle for high-speed tests |
 | Bus supply | **24.0 V** measured under load |
 | USB | CDC bridge on the same node under test |
-| Node | **3** (USB) for fw 1.11 error/RPM tables; older 1.2 soak was node 1 |
+| Node | **3** (USB, MAC A0) for fw 1.11 error/RPM tables; older 1.2 soak was node 1 |
 
 ### What was tested
 
@@ -475,6 +475,10 @@ node.configure_closed_loop_speed(6000, run_current=70, microsteps=8,
 | USB disconnect under load | Drop continuous current (e.g. 100%→70%); check 24 V bulk capacitance |
 
 ### Tracking PID notes (fw ≥1.2)
+
+From a **PLC** (CANopen 2.1) the same gains are REAL32 objects: **0x200F** Kp,
+**0x2010** Ki, **0x2011** Kd, **0x201A** Ka, **0x2012** tolerance. See
+[canopen.md](canopen.md#tune-gains-from-the-plc).
 
 Feedforward carries the move. PID only trims lag:
 

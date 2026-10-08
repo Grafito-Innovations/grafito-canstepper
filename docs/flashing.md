@@ -242,6 +242,6 @@ need Python again.
 ## Related
 
 - [Firmware downloads](https://docs.grafito.in/docs/firmware)
-- [CANopen / CiA 402](https://docs.grafito.in/docs/canopen)
+- [CANopen / CiA 402](canopen.md) — EDS, DCF, [tune gains from the PLC](canopen.md#tune-gains-from-the-plc)
 - [Quickstart](quickstart.md)
 - [Hardware (docs site)](https://docs.grafito.in/docs/hardware)

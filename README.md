@@ -114,6 +114,7 @@ with CANStepperBus.serial("/dev/ttyACM0") as bus:
 Continue with:
 
 - [docs/flashing.md](docs/flashing.md) — Arduino IDE + arduino-cli (GCSP and CANopen)
+- [docs/canopen.md](docs/canopen.md) — EDS/DCF, PLC enable, tune Kp/Ki/Kd/Ka
 - [docs/quickstart.md](docs/quickstart.md) — first motion
 - [docs/closed_loop_tuning.md](docs/closed_loop_tuning.md) — trapezoid + v_ff
 - [docs/protocol.md](docs/protocol.md) — GCSP v1 wire protocol
@@ -153,8 +154,9 @@ until `enable()`). Optional **CANopen 2.1** lives in
 `GrafitoCANStepper_Node1.dcf` / `GrafitoCANStepper_Node2.dcf`
 (FileRevision 2, identity `0x00020100`). Discard any older 2.0 EDS — it
 will not import this board. Node 2 must be flashed with
-`-DCO_FACTORY_NODE_ID=2`. See **https://docs.grafito.in/docs/canopen**.
-Do not mix GCSP and CANopen on one bus.
+`-DCO_FACTORY_NODE_ID=2`. See [docs/canopen.md](docs/canopen.md) and
+**https://docs.grafito.in/docs/canopen**. PLC gains: 0x200F Kp, 0x2010 Ki,
+0x2011 Kd, 0x201A Ka (REAL32). Do not mix GCSP and CANopen on one bus.
 
 **How to flash (Arduino IDE + arduino-cli, GCSP and CANopen):**
 [docs/flashing.md](docs/flashing.md) · https://docs.grafito.in/docs/flashing

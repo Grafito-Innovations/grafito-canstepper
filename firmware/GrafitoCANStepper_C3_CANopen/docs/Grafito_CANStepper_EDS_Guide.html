@@ -288,6 +288,22 @@ PDOMapping=1            ; 1 = may be mapped into a PDO
   On the first live CANopen bench, a +10° command ran the opposite way and faulted. Many GCSP boards were stored with INVERT_DIR=1. CANopen NVS is a new namespace, so invert defaults to 0. If the motor runs away from the target, set 0x2006 = 1, save, and retry a small move.
 </div>
 
+<h3>2.6 Tune gains from the PLC</h3>
+<p>Closed-loop command is <span class="mono">v = v_ff + Ka · a_ff + PID(r − encoder)</span>.
+PID only trims lag. Cruise speed is <strong>0x6081</strong>, not Kp.
+Write gain objects as <strong>REAL32</strong> (IEEE-754). In TwinCAT / Codesys map them as REAL — do not write integer 10 into 0x200F.</p>
+<table>
+  <tr><th>Index</th><th>Name</th><th>Factory</th><th>What to change</th></tr>
+  <tr><td>0x200F</td><td>Kp</td><td>10.0</td><td>Stiffness. Raise if it lags; lower if it buzzes.</td></tr>
+  <tr><td>0x2011</td><td>Kd</td><td>0.35</td><td>Damping. Raise if it rings at settle.</td></tr>
+  <tr><td>0x2010</td><td>Ki</td><td>0.3</td><td>Steady-state. Keep small; too much → overshoot / 0x7122.</td></tr>
+  <tr><td>0x201A</td><td>Ka</td><td>0.04</td><td>Accel feedforward. Raise if it sags in accel/decel.</td></tr>
+  <tr><td>0x2012</td><td>PID tolerance</td><td>0.35°</td><td>Target-reached band. Too tight at high RPM → 0x7122.</td></tr>
+</table>
+<p>Before PID: invert <span class="mono">0x2006</span>, current <span class="mono">0x2003</span> 30–40, closed loop <span class="mono">0x2007 = 1</span>,
+velocity <span class="mono">0x6081</span>, accel <span class="mono">0x6083</span>. Save with <span class="mono">0x2008 = 1</span>.</p>
+<p>Order: enable 6 → 7 → 15; leave Ki/Ka at factory; step Kp by ~2 (8 → 10 → 12); if it oscillates raise Kd or drop Kp; then nudge Ka or Ki; save.</p>
+
 <!-- ============================================================ -->
 <h2 id="p3" class="page-break">Part 3 — Intermediate: CiA 402 drive profile <span class="level int">Intermediate</span></h2>
 
