@@ -20,7 +20,12 @@ boards used three different connector types and are harder to cable.
 4. CAN: termination is **enabled by default** (0 Ω jumper → 120 Ω path). For
    daisy-chain mid-nodes, **remove the 0 Ω resistor**; keep termination on the
    two physical ends (pads can be shorted to restore end termination).
-5. Install the host library (PyPI: `grafito-canstepper`, import `canstepper`):
+5. With USB and Vin connected, open the
+   **[CANStepper Test Station](https://docs.grafito.in/dashboard)** to set the
+   node ID, enable the driver, jog, and confirm encoder / TMC / CAN telemetry.
+
+   ![CANStepper Test Station](../model_assets/CANStepper_test_station.png)
+6. Install the host library (PyPI: `grafito-canstepper`, import `canstepper`):
 
 ```bash
 pip install grafito-canstepper

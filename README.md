@@ -22,6 +22,7 @@ through the USB port of any board on the chain.
 - **Shop / brochure:** [CANStepper Adapter Board](https://grafito.in/shop/products/canstepper-adapter-board/)
 - **Amazon (India):** https://www.amazon.in/dp/B0H8XZ6V99
 - **Docs:** https://docs.grafito.in
+- **Board test station:** https://docs.grafito.in/dashboard
 - **Mechanical CAD & drawings:** https://docs.grafito.in/docs/mechanical-cad
 - **PyPI:** [grafito-canstepper](https://pypi.org/project/grafito-canstepper/)
 
@@ -33,6 +34,7 @@ CAD and brochure files in this repo (`model_assets/`):
 | `CANStepper_pinout.png` | Connector / pinout diagram |
 | `CANStepper_multiaxis_can.png` | Multi-axis CAN bus demonstration |
 | `CANStepper_V1_assembly.mp4` | V1 board assembly video (historical) |
+| `CANStepper_test_station.png` | Board Test Station (after USB connect) |
 | `CANStepper_block_diagram.png` | System block diagram |
 | `CANStepper_V2_Assembly.webp` | V2 assembly render |
 | `Drawing_CANStepper_V2.pdf` | V2 PCB mechanical drawing |
@@ -56,6 +58,12 @@ crimping.
 > **Important — encoder magnet:** Fit a **diametrical** magnet on the motor
 > shaft. The magnet polarity must be **radial**, not axial. An axial magnet
 > will not produce a valid MT6701 angle and closed-loop control will fail.
+
+After USB and Vin are connected, test the board in the
+**[CANStepper Test Station](https://docs.grafito.in/dashboard)** — set the
+node ID, enable the driver, jog, and check encoder / TMC / CAN telemetry.
+
+[![CANStepper Test Station](model_assets/CANStepper_test_station.png)](https://docs.grafito.in/dashboard)
 
 ## Highlights
 
