@@ -2,21 +2,26 @@
 
 Published with in-page previews at **https://docs.grafito.in/docs/mechanical-cad**.
 
-Source files live in `model_assets/` at the repo root. The docs site and shop
-host optimized copies under `/model-assets/`.
+Source files live in `model_assets/` at the repo root. These are the **V2**
+board assets used on the shop and docs sites.
 
 | File (repo) | Published path | Description |
 | --- | --- | --- |
 | `CANStepper_block_diagram.png` | `/model-assets/canstepper-block-diagram.webp` | System block diagram |
-| `CANStepper_V1_Assembly.png` | `/model-assets/canstepper-v1-assembly.webp` | Assembly render |
-| `Drawing_CANStepper_V1.pdf` | `/model-assets/canstepper-v1-drawing.pdf` | PCB mechanical drawing |
-| `CANStepperV1_3D_PCB.step` | `/model-assets/canstepper-v1-3d-pcb.step` | Full PCB STEP (~29 MB) |
+| `CANStepper_V2_Assembly.webp` | `/model-assets/canstepper-v2-assembly.webp` | V2 assembly render |
+| `Drawing_CANStepper_V2.pdf` | `/model-assets/canstepper-v2-drawing.pdf` | V2 PCB mechanical drawing |
+| `CANStepperV2_3D_PCB.step` | `/model-assets/canstepper-v2-3d-pcb.step` | V2 PCB STEP (~24 MB) |
+| `CANStepper_pinout.png` | `/model-assets/canstepper-pinout.png` | Connector / pinout diagram |
 | `CASING_MOUNT.step` | `/model-assets/canstepper-casing-mount.step` | Casing / mount STEP |
 | `Heat_Spreader.step` | `/model-assets/canstepper-heat-spreader.step` | Heat spreader STEP |
 | `TMC2209 UART Stepper Driver - Heat_Sink.step` | `/model-assets/tmc2209-heat-sink.step` | TMC2209 heatsink STEP |
+| `canstepper-brochure-v2.pdf` | `/brochures/canstepper-brochure-v2.pdf` | Product brochure |
 
 Shop product page CAD section:
 https://grafito.in/shop/products/canstepper-adapter-board/#mechanical-cad
+
+Brochure:
+https://grafito.in/brochures/canstepper-brochure-v2.pdf
 
 ## Videos
 

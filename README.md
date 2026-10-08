@@ -23,17 +23,19 @@ through the USB port of any board on the chain.
 - **Mechanical CAD & drawings:** https://docs.grafito.in/docs/mechanical-cad
 - **PyPI:** [grafito-canstepper](https://pypi.org/project/grafito-canstepper/)
 
-CAD files in this repo (`model_assets/`):
+CAD and brochure files in this repo (`model_assets/`):
 
 | File | Description |
 | --- | --- |
 | `CANStepper_block_diagram.png` | System block diagram |
-| `CANStepper_V1_Assembly.png` | Assembly render |
-| `Drawing_CANStepper_V1.pdf` | PCB mechanical drawing |
-| `CANStepperV1_3D_PCB.step` | Full PCB STEP |
+| `CANStepper_V2_Assembly.webp` | V2 assembly render |
+| `Drawing_CANStepper_V2.pdf` | V2 PCB mechanical drawing |
+| `CANStepperV2_3D_PCB.step` | V2 PCB STEP |
+| `CANStepper_pinout.png` | Connector / pinout diagram |
 | `CASING_MOUNT.step` | Casing / mount STEP |
 | `Heat_Spreader.step` | Heat spreader STEP |
 | `TMC2209 UART Stepper Driver - Heat_Sink.step` | TMC2209 heatsink STEP |
+| `canstepper-brochure-v2.pdf` | Product brochure | |
 
 ## Highlights
 
