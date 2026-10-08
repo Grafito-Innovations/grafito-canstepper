@@ -1,5 +1,7 @@
 # Grafito CANStepper
 
+![Grafito CANStepper](CANStepper.png)
+
 Closed-loop stepper motor control over CAN. Each board carries an ESP32-C3,
 a TMC2209 driver, an MT6701 14-bit magnetic encoder and a CAN transceiver;
 up to 31 boards daisy-chain on one 1 Mbps bus and are driven from Python
@@ -27,15 +29,21 @@ CAD and brochure files in this repo (`model_assets/`):
 
 | File | Description |
 | --- | --- |
+| `CANStepper.png` | Product photo (also at repo root) |
+| `CANStepper_pinout.png` | Connector / pinout diagram |
+| `CANStepper_multiaxis_can.png` | Multi-axis CAN bus demonstration |
 | `CANStepper_block_diagram.png` | System block diagram |
 | `CANStepper_V2_Assembly.webp` | V2 assembly render |
 | `Drawing_CANStepper_V2.pdf` | V2 PCB mechanical drawing |
 | `CANStepperV2_3D_PCB.step` | V2 PCB STEP |
-| `CANStepper_pinout.png` | Connector / pinout diagram |
 | `CASING_MOUNT.step` | Casing / mount STEP |
 | `Heat_Spreader.step` | Heat spreader STEP |
 | `TMC2209 UART Stepper Driver - Heat_Sink.step` | TMC2209 heatsink STEP |
-| `canstepper-brochure-v2.pdf` | Product brochure | |
+| `canstepper-brochure-v2.pdf` | Product brochure |
+
+![CANStepper pinout](model_assets/CANStepper_pinout.png)
+
+![CAN bus multi-axis demonstration](model_assets/CANStepper_multiaxis_can.png) |
 
 ## Highlights
 
